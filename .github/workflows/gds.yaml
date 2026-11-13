@@ -8,6 +8,7 @@ on:
 jobs:
   gds:
     runs-on: ubuntu-24.04
+    timeout-minutes: 60 # cap on metered runner time; raise it when the design needs longer
     steps:
       - name: checkout repo
         uses: actions/checkout@v6
