@@ -1,0 +1,12 @@
+(library
+ (name probe_edges)
+ (modules edges)
+ (libraries core hardcaml)
+ (inline_tests)
+ (preprocess
+  (pps ppx_jane ppx_expect)))
+
+(executable
+ (name emit)
+ (modules emit)
+ (libraries core hardcaml probe_edges))

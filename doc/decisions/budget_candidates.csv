@@ -1,0 +1,5 @@
+name,threads,slots,local,routed,macros,util
+"Reduced: 2 threads, 4 rule slots, 512x16 data",2,4,270605,359905,125029,40.1
+"Minimum: 3 threads, 4 rule slots",3,4,310305,412706,159394,47.4
+"Full, latch-held rule tables: 3 threads, 8 slots, all increments",3,8,362791,482512,159394,53.1
+"Full, flop-held rule tables: 3 threads, 8 slots, all increments",3,8,380711,506346,159394,55.1

@@ -1,7 +1,7 @@
 # Protocol emulator, 8x4
 
 A reprogrammable protocol emulator for a Tiny Tapeout 8x4 tile on IHP SG13CMOS5L, written in Hardcaml and
-emitted as Verilog. Status: architecture proposed, no RTL yet.
+emitted as Verilog. Status: architecture ratified, no RTL yet.
 
 | where | what |
 |---|---|
