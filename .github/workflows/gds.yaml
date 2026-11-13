@@ -1,7 +1,8 @@
 name: gds
 
+# Manual trigger only: a hardening run takes hours of runner time, which is metered
+# while this repository is private. Start it from the Actions tab or the API.
 on:
-  push:
   workflow_dispatch:
 
 jobs:
