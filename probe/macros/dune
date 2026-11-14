@@ -1,0 +1,9 @@
+(library
+ (name probe_macros)
+ (modules probe_macros)
+ (libraries base hardcaml))
+
+(executable
+ (name emit_probe_macros)
+ (modules emit_probe_macros)
+ (libraries hardcaml probe_macros))

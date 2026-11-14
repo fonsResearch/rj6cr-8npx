@@ -31,6 +31,70 @@
   "//": "https://tinytapeout.com/faq/#how-can-i-map-an-additional-external-clock-to-one-of-the-gpios",
   "CLOCK_PORT": "clk",
 
+  "//": "--- SRAM macros (branch probe-macros): placement, power and checks ---",
+  "//": "Method and numbers: log/macro_probe.md. The Tile.MacroColumnStripes step is in",
+  "//": "librelane_plugin_tile_pdn.py and flow/pdn.",
+  "meta": {
+    "flow": "Classic",
+    "substituting_steps": { "+OpenROAD.GeneratePDN": "Tile.MacroColumnStripes" }
+  },
+  "MACROS": {
+    "RM_IHPSG13_1P_512x32_c2_bm_bist": {
+      "gds": ["pdk_dir::libs.ref/sg13cmos5l_sram/gds/RM_IHPSG13_1P_512x32_c2_bm_bist.gds"],
+      "lef": ["pdk_dir::libs.ref/sg13cmos5l_sram/lef/RM_IHPSG13_1P_512x32_c2_bm_bist.lef"],
+      "spice": ["pdk_dir::libs.ref/sg13cmos5l_sram/cdl/RM_IHPSG13_1P_512x32_c2_bm_bist.cdl"],
+      "nl": [],
+      "spef": {},
+      "lib": {
+        "nom_typ_1p20V_25C": ["pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_512x32_c2_bm_bist_typ_1p20V_25C.lib"],
+        "nom_fast_1p32V_m40C": ["pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_512x32_c2_bm_bist_fast_1p32V_m55C.lib"],
+        "nom_slow_1p08V_125C": ["pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_512x32_c2_bm_bist_slow_1p08V_125C.lib"]
+      },
+      "instances": {
+        "core.u_prog": { "location": [48.0, 41.58], "orientation": "FS" }
+      }
+    },
+    "RM_IHPSG13_1P_1024x16_c2_bm_bist": {
+      "gds": ["pdk_dir::libs.ref/sg13cmos5l_sram/gds/RM_IHPSG13_1P_1024x16_c2_bm_bist.gds"],
+      "lef": ["pdk_dir::libs.ref/sg13cmos5l_sram/lef/RM_IHPSG13_1P_1024x16_c2_bm_bist.lef"],
+      "spice": ["pdk_dir::libs.ref/sg13cmos5l_sram/cdl/RM_IHPSG13_1P_1024x16_c2_bm_bist.cdl"],
+      "nl": [],
+      "spef": {},
+      "lib": {
+        "nom_typ_1p20V_25C": ["pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_1024x16_c2_bm_bist_typ_1p20V_25C.lib"],
+        "nom_fast_1p32V_m40C": ["pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_1024x16_c2_bm_bist_fast_1p32V_m55C.lib"],
+        "nom_slow_1p08V_125C": ["pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_1024x16_c2_bm_bist_slow_1p08V_125C.lib"]
+      },
+      "instances": {
+        "core.u_data": { "location": [587.52, 41.58], "orientation": "FS" }
+      }
+    }
+  },
+  "PDN_CFG": "dir::../flow/pdn/pdn_cfg.tcl",
+  "PDN_MACRO_CONNECTIONS": [
+    "core\\.u_(prog|data) VPWR VGND VDD! VSS!",
+    "core\\.u_(prog|data) VPWR VGND VDDARRAY! VSS!"
+  ],
+  "PDN_OBSTRUCTIONS": [
+    "Metal4 232.28 0 241.00 710.64",
+    "Metal4 277.24 0 280.34 710.64",
+    "Metal4 462.70 0 465.80 710.64",
+    "Metal4 681.88 0 690.60 710.64",
+    "Metal4 726.84 0 729.94 710.64",
+    "Metal4 822.38 0 825.48 710.64"
+  ],
+  "TILE_STRIPE_FULL_SPAN": true,
+  "TILE_STRIPE_CROSS_PIN_GAPS": true,
+  "ERROR_ON_PDN_VIOLATIONS": 0,
+  "ERROR_ON_ILLEGAL_OVERLAPS": 0,
+  "//": "Magic DRC stays on. Its deck has no exceptions for the inside of the IHP SRAM, so its",
+  "//": "errors are reported without stopping the flow; the precheck runs the PDK's KLayout deck.",
+  "ERROR_ON_MAGIC_DRC": 0,
+  "FP_MACRO_HORIZONTAL_HALO": 2.0,
+  "FP_MACRO_VERTICAL_HALO": 0.48,
+  "RUN_POST_GRT_DESIGN_REPAIR": true,
+  "GRT_DESIGN_REPAIR_MAX_CAP_PCT": 30,
+
   "//": "Configuration docs: https://librelane.readthedocs.io/en/latest/reference/configuration.html",
 
   "//": "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
@@ -58,7 +122,9 @@
   "FP_IO_HLENGTH": 2,
   "FP_IO_VLENGTH": 2,
 
-  "FP_PDN_VPITCH": 50.0,
+  "FP_PDN_VPITCH": 44.96,
+  "FP_PDN_VSPACING": 3.52,
+  "FP_PDN_VOFFSET": 6.15,
   "FP_PDN_VWIDTH": 2.1,
 
   "//": "Clock",
