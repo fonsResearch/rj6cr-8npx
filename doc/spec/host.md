@@ -98,6 +98,7 @@ ignore writes.
 | 0x20..0x22 | FAIL_INFO, FAIL_LO, FAIL_HI | R | [15] valid, [14] maximum, [13] a blame came first, [3:0] rule; cycle |
 | 0x24..0x26 | BLAME_INFO, BLAME_LO, BLAME_HI | R | as FAIL, without bit 13 |
 | 0x27 | VERDICT_CLEAR | W | bit 0: clear both records |
+| 0x30..0x36 | trace | | see `trace.md` |
 
 Thread T at 0x40 + 16 T:
 

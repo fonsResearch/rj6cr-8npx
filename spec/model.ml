@@ -5,7 +5,9 @@
 
    and of the host port and loader (doc/spec/host.md).
 
-   Not modelled yet (their documents are not written): line unit, response rules, trace. *)
+   and of the trace (doc/spec/trace.md).
+
+   Not modelled yet (their documents are not written): line unit, response rules. *)
 open Isa
 
 let m16 = 0xFFFF
@@ -164,6 +166,20 @@ type chip =
   ; mutable hstat : int (* host status flags *)
   ; mutable now_latch : int
   ; host : host
+  ; mutable tr_en : bool
+  ; mutable tr_freeze : bool (* stop recording after a verdict *)
+  ; mutable tr_base : int
+  ; mutable tr_size : int (* records *)
+  ; mutable tr_mask : int (* pins whose changes are recorded *)
+  ; mutable tr_post : int (* records still taken after the verdict *)
+  ; mutable tr_ptr : int
+  ; mutable tr_wrapped : bool
+  ; mutable tr_frozen : bool
+  ; mutable tr_trig : bool
+  ; mutable tr_left : int
+  ; tr_rec : int array (* the record being written *)
+  ; mutable tr_widx : int (* next word of it; 4: none in progress *)
+  ; mutable tr_lost : bool
   }
 
 let no_owner = 7
@@ -190,7 +206,10 @@ let create ?(fifo_depth = 1) ?(n_rules = 4) () =
   ; pv_prev = 0; emits = []; fifo_depth; rules = Array.init n_rules (fun _ -> new_rule ())
   ; first_fail = None; first_blame = None; blame_before_fail = false; oe_hist = Array.make 8 0
   ; ev_rise = 0; ev_fall = 0; cyc_emits = []; hstat = 0; now_latch = 0
-  ; host = { count = 0; sh = 0; cmd = 0; haddr = 0; osh = 0; miso = 0; rbuf = 0; req = None } }
+  ; host = { count = 0; sh = 0; cmd = 0; haddr = 0; osh = 0; miso = 0; rbuf = 0; req = None }
+  ; tr_en = false; tr_freeze = false; tr_base = 0; tr_size = 0; tr_mask = 0; tr_post = 4; tr_ptr = 0
+  ; tr_wrapped = false; tr_frozen = false; tr_trig = false; tr_left = 0; tr_rec = Array.make 4 0
+  ; tr_widx = 4; tr_lost = false }
 ;;
 
 (* --- pins --- *)
@@ -839,6 +858,13 @@ let reg_peek chip addr =
   | 0x24 -> blame_info
   | 0x25 -> blame_cycle land m16
   | 0x26 -> blame_cycle lsr 16
+  | 0x30 -> (if chip.tr_en then 1 else 0) lor if chip.tr_freeze then 2 else 0
+  | 0x31 -> chip.tr_base
+  | 0x32 -> chip.tr_size
+  | 0x33 -> chip.tr_mask land m16
+  | 0x34 -> chip.tr_mask lsr 16
+  | 0x35 -> chip.tr_ptr lor (if chip.tr_wrapped then 0x8000 else 0) lor if chip.tr_frozen then 0x4000 else 0
+  | 0x36 -> chip.tr_post
   | _ ->
     (match thread_reg addr, rule_reg chip addr with
      | Some (t, j), _ ->
@@ -940,6 +966,15 @@ let reg_write chip addr v =
       chip.first_blame <- None;
       chip.blame_before_fail <- false
     end
+  | 0x30 ->
+    chip.tr_en <- v land 1 = 1; chip.tr_freeze <- v land 2 = 2; chip.tr_ptr <- 0
+    ; chip.tr_wrapped <- false; chip.tr_frozen <- false; chip.tr_trig <- false; chip.tr_widx <- 4
+    ; chip.tr_lost <- false
+  | 0x31 -> chip.tr_base <- v land 1023
+  | 0x32 -> chip.tr_size <- min v 256
+  | 0x33 -> chip.tr_mask <- chip.tr_mask land 0xFF0000 lor v
+  | 0x34 -> chip.tr_mask <- chip.tr_mask land m16 lor ((v land 0xFF) lsl 16)
+  | 0x36 -> chip.tr_post <- v land 0xFF
   | _ ->
     (match thread_reg addr, rule_reg chip addr with
      | Some (t, j), _ ->
@@ -1086,6 +1121,86 @@ let host_cycle chip ~n ~pv ~pv_prev =
   end
 ;;
 
+(* --- trace (doc/spec/trace.md) --- *)
+
+(* The trace in cycle n. A record is four words in the data memory, written one word per
+   round in the system slot when the host does not use it:
+     word 0  now[15:0]      word 1  now[31:16]
+     word 2  pins P0..P15
+     word 3  [15] changes or events were lost before this record
+             [14] 0: pin record, [7:0] = pins P16..P23
+                  1: EMIT record, [13:12] = thread, [7:0] = code *)
+let trace_cycle chip ~n ~pv ~pv_prev ~slot_free =
+  if chip.tr_en && chip.tr_size > 0
+  then begin
+    if chip.tr_widx < 4 && n land 3 = 1 && slot_free
+    then begin
+      chip.data.((chip.tr_base + (4 * chip.tr_ptr) + chip.tr_widx) land 1023) <- chip.tr_rec.(chip.tr_widx);
+      chip.tr_widx <- chip.tr_widx + 1;
+      if chip.tr_widx = 4
+      then begin
+        chip.tr_ptr <- chip.tr_ptr + 1;
+        if chip.tr_ptr >= chip.tr_size
+        then begin
+          chip.tr_ptr <- 0;
+          chip.tr_wrapped <- true
+        end;
+        if chip.tr_trig && chip.tr_left > 0 then chip.tr_left <- chip.tr_left - 1
+      end
+    end;
+    if chip.tr_freeze && (chip.first_fail <> None || chip.first_blame <> None) && not chip.tr_trig
+    then begin
+      chip.tr_trig <- true;
+      chip.tr_left <- chip.tr_post
+    end;
+    if chip.tr_trig && chip.tr_left = 0 && chip.tr_widx = 4 then chip.tr_frozen <- true;
+    if not chip.tr_frozen
+    then begin
+      let changed = (pv lxor pv_prev) land chip.tr_mask <> 0 in
+      let emits = chip.cyc_emits in
+      if chip.tr_widx < 4
+      then (if changed || emits <> [] then chip.tr_lost <- true)
+      else if changed || emits <> [] || chip.tr_lost
+      then begin
+        let pin_record = changed || emits = [] in
+        let lost = chip.tr_lost || (changed && emits <> []) || List.length emits > 1 in
+        chip.tr_rec.(0) <- n land m16;
+        chip.tr_rec.(1) <- (n lsr 16) land m16;
+        chip.tr_rec.(2) <- pv land m16;
+        chip.tr_rec.(3)
+        <- (if lost then 0x8000 else 0)
+           lor
+           if pin_record
+           then (pv lsr 16) land 0xFF
+           else (
+             let t, code = List.hd (List.rev emits) in
+             0x4000 lor (t lsl 12) lor code);
+        chip.tr_widx <- 0;
+        chip.tr_lost <- false
+      end
+    end
+  end
+;;
+
+(* The records in the trace window, oldest first: (cycle, pins or -1, emit (thread, code) or
+   none, lost). For tests and host software. *)
+let trace_records chip =
+  let rec_at k =
+    let a j = chip.data.((chip.tr_base + (4 * k) + j) land 1023) in
+    let w3 = a 3 in
+    let cycle = a 0 lor (a 1 lsl 16) in
+    if w3 land 0x4000 = 0
+    then cycle, a 2 lor ((w3 land 0xFF) lsl 16), None, w3 land 0x8000 <> 0
+    else cycle, -1, Some ((w3 lsr 12) land 3, w3 land 0xFF), w3 land 0x8000 <> 0
+  in
+  let idx =
+    if chip.tr_wrapped
+    then List.init chip.tr_size (fun k -> (chip.tr_ptr + k) mod chip.tr_size)
+    else List.init chip.tr_ptr (fun k -> k)
+  in
+  List.map rec_at idx
+;;
+
 (* --- the same host operations without the SPI timing, for tests --- *)
 
 let treg tid j = 0x40 + (16 * tid) + j
@@ -1190,7 +1305,9 @@ let step chip ~pad =
       | _ -> ())
     chip.th;
   rules_update chip ~n ~pv ~pv_prev;
+  let host_uses_slot = match chip.host.req with Some (false, _, _, _) -> n land 3 = 1 | _ -> false in
   host_cycle chip ~n ~pv ~pv_prev;
+  trace_cycle chip ~n ~pv ~pv_prev ~slot_free:(not host_uses_slot);
   for k = 7 downto 1 do chip.oe_hist.(k) <- chip.oe_hist.(k - 1) done;
   (* pins without a thread as owner hold the safe pattern *)
   let unowned = ref 0 in

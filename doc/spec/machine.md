@@ -2,8 +2,8 @@
 
 Draft 0.3 of 2026-11-14. Normative once frozen; until then `spec/model.ml` and this text are changed
 together. Scope: the three program threads, their timing hardware, the pad stage, memory windows, faults.
-The rule engine is in `rules.md`, the host port and loader in `host.md`. Not yet specified: line unit,
-response rules, trace. Instruction encodings are in `isa.md`, generated from `spec/isa.ml`.
+The rule engine is in `rules.md`, the host port and loader in `host.md`, the trace in `trace.md`. Not
+yet specified: line unit, response rules. Instruction encodings are in `isa.md`, generated from `spec/isa.ml`.
 
 Every statement below is implemented in `spec/model.ml`; the tests named in section 12 show the timing
 statements on running programs.
@@ -237,7 +237,7 @@ circuit form of this model in a later step.
 Shared: `now` 32; pad registers 24; pin configuration (owner, open drain, safe pattern, filter length)
 108; synchronisers, filter counters and previous values 88. Core state: 3 x 408 + 252 = 1,476 bits, not
 counting pipeline registers. Rule engine: 122 bits per rule and 131 shared (`rules.md`, section 9). Host
-port and loader: about 313 bits (`host.md`, section 5).
+port and loader: about 313 bits (`host.md`, section 5). Trace: about 140 bits (`trace.md`, section 5).
 
 ## 14. Decisions taken in this draft
 
