@@ -204,24 +204,13 @@ require it (section 8, risk 1).
 Sub-cycle delay lines (outside timing analysis and proofs); a pin crossbar; per-pin event queues; an
 on-chip program certificate checker; a second clock domain; any block that exists for one protocol only.
 
-## 11. Held-out list
+## 11. Held-out protocols
 
-The held-out protocols are drawn by `tools/heldout_draw.py`, run by you and never by a design session: a list a
-design session can see is not held out.
-
-- Pool, fixed in the script before any draw: the 68 decoders of the sigrok catalogue (libsigrokdecode
-  71f4514430, 132 decoder directories) that take raw logic as input, minus the 10 protocols already in
-  section 6, minus 7 measurement utilities that define no protocol: 51 names. Nothing is removed
-  for being hard or infeasible on this chip; a held-out protocol that cannot be done is reported as such.
-- `seal` creates a secret salt and prints its commitment and a pulse time in the future. Both are committed.
-- `draw`, after that time, takes the first NIST randomness-beacon pulse at or after it and selects the 8
-  names with the smallest sha256(pulse : salt : name). It prints only the SHA-256 of the result file, which
-  is committed before any specification is written.
-- `verify`, at reveal, recomputes pool, pulse, draw and the three committed values from the revealed file.
-
-The salt keeps the draw unknown to anyone who has only the public inputs; committing it before the pulse
-exists prevents re-rolling. State on 2026-11-13: the pool is fixed (its hash is printed by `seal`: `4b8f7c6dfff3f970163fbe965d09a7a91a26ae98fe3c56ec3e3e4f5dcfb484f7`); seal and draw are not yet made. Tested on 2026-11-13 with a throwaway salt and a past pulse: seal, draw,
-refusal to draw twice, verify, detection of an altered list, refusal before the pulse exists.
+Protocols outside section 6 are attempted only after the chip is frozen, and they are chosen then by the
+author. No list exists before the freeze, so the design cannot be shaped towards it. This supports the
+statement that these protocols were not used while designing; it is not a blind or randomised selection
+and is not described as one. (Decision of 2026-11-14; an earlier draft of this section proposed a sealed
+random draw, which was dropped.)
 
 ## 12. Hardcaml and downstream flags
 
