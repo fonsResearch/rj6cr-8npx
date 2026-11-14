@@ -79,8 +79,9 @@ Nothing has been routed at 48 MHz or on 8x4 with this design.
 - First push, 2026-11-13: the test workflow's cocotb test passed, but its artifact upload failed with
   "Artifact storage quota has been hit". The quota is per account, so a hardening run in this repository
   would fail to upload its results as well until storage is freed or the repository is public. The docs
-  workflow failed on the unfilled pinout and `docs/info.md`; both now carry provisional content (not
-  re-run yet).
+  workflow failed on the unfilled pinout and `docs/info.md`. With provisional content in both (push of
+  2026-11-14) its checks and the document build pass, and it fails at the artifact upload for the same
+  quota reason.
 
 ## 8. Local tools
 
