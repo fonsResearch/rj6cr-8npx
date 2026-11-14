@@ -314,3 +314,59 @@ loop:   PULL r0, 0
   Printf.printf "sent %d words, received %s\n" !sent (String.concat " " (List.rev_map string_of_int !got));
   [%expect {| sent 5 words, received 101 201 301 401 501 |}]
 ;;
+
+(* SPI controller, mode 0, most significant bit first, against a target modelled in the test.
+   OUTSC puts the next MOSI bit and SCK low into one commit; INSC shifts in MISO as captured
+   at that commit (the bit the target presented during the previous high phase) and stages
+   SCK high. The first bit shifted in is therefore not data and ends up above bit 7. *)
+let%expect_test "SPI controller: one byte each way, three instructions per bit" =
+  let src : (int -> string, unit, string) format =
+    {|
+        ALUI mov, r0, 0xA500
+        ALUI mov, r1, 0
+        ALUI mov, r2, 8
+        TPERI 0, %d
+        TPERI 1, 0
+        TNOW 12
+loop:   OUTSC 1, 10, r0, 9, 0 @adv
+        INSC 1, cap, 19, r1, 9, 1 @adv
+        DJNZ r2, loop
+        PINV 0, 9 @adv
+        INS 1, cap, 19, r1
+        HALT
+    |}
+  in
+  List.iter
+    (fun half ->
+      let chip = setup ~pins:[ 9; 10 ] (Printf.sprintf src (half * 256)) in
+      let tx = 0x3C in
+      let idx = ref 7 and rx = ref 0 and sck_prev = ref 0 and miso_prev = ref 0 in
+      let rises = ref [] in
+      for n = 0 to 399 do
+        let sck = level chip 9 and mosi = level chip 10 in
+        if !sck_prev = 0 && sck = 1
+        then begin
+          rx := ((!rx lsl 1) lor mosi) land 0xFF;
+          rises := n :: !rises
+        end;
+        if !sck_prev = 1 && sck = 0 then decr idx;
+        sck_prev := sck;
+        let miso = if !idx >= 0 then (tx lsr !idx) land 1 else 0 in
+        Model.step chip ~pad:(!miso_prev lsl 19);
+        miso_prev := miso
+      done;
+      let rs = List.rev !rises in
+      let gaps = List.sort_uniq compare (List.map2 (fun a b -> b - a) (List.rev (List.tl (List.rev rs))) (List.tl rs)) in
+      Printf.printf "half period %d: %d clock pulses, period {%s} cycles; target got %02X (A5), chip got %02X (3C); %s, slack minimum %d\n"
+        half (List.length rs)
+        (String.concat "," (List.map string_of_int gaps))
+        !rx
+        (chip.th.(0).r.(1) land 0xFF)
+        (state_name chip.th.(0)) chip.th.(0).slack_min)
+    [ 8; 6; 5 ];
+  [%expect {|
+    half period 8: 8 clock pulses, period {16} cycles; target got A5 (A5), chip got 3C (3C); halted, slack minimum 8
+    half period 6: 8 clock pulses, period {12} cycles; target got A5 (A5), chip got 3C (3C); halted, slack minimum 4
+    half period 5: 2 clock pulses, period {10} cycles; target got 02 (A5), chip got 00 (3C); fault LATE, slack minimum 0
+    |}]
+;;

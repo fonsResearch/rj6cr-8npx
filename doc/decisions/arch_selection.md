@@ -143,7 +143,7 @@ and frequency offset (a stated physical assumption), and pad timing outside the 
 | protocol | mechanism | operating clock | note |
 |---|---|---|---|
 | UART | firmware, fractional period | any | exact baud at any clock |
-| SPI controller, modes 0-3 | firmware | any | up to about 6 MHz SCK [estimate] |
+| SPI controller, modes 0-3 | firmware | any | 12 cycles per bit on the reference model, 4 MHz SCK at 48 MHz (was estimated at about 6 MHz) |
 | SPI target | firmware; response rules for the first reply bit | any | reaction through synchroniser and round, about 10 cycles [estimate] |
 | I2C controller and target, 100 and 400 kHz | firmware; response rule for acknowledge | any | |
 | USB low speed | line unit, 32 samples per bit | 48 MHz | handshake by firmware or response rule |

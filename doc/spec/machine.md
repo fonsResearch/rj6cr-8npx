@@ -212,6 +212,7 @@ The table in `isa.md` gives one line per instruction; where it is not exhaustive
 | faults leave the pins in the safe pattern | section 9 |
 | isolation | thread 0's trace is identical with and without two running neighbours |
 | host mailbox round trip | PULL, ST, LD, PUSH |
+| SPI controller | mode 0 byte exchange with a modelled target at 12 cycles per bit; LATE at 10 |
 
 The rule engine's tests are listed in `rules.md`. These are examples, not proofs. The claims of the architecture document are proved on the RTL against a
 circuit form of this model in a later step.
@@ -262,6 +263,6 @@ To be confirmed or changed when the documents are frozen.
 2. Whether the "timing events first" order, which puts the fire decision in front of the execute stage,
    meets 48 MHz with the rule engine's blocking decision in that path (`rules.md`, open point 2).
 3. Status bits 7 to 15 and the rest of the I/O register map.
-4. Firmware rates quoted in the architecture document are estimates; from the rules above a serial bit
-   needs 8 cycles (6 Mbit/s at 48 MHz) and an SPI controller bit with a clocked shift 12 cycles (4 MHz).
-   Neither SPI figure is demonstrated by a test yet.
+4. Firmware rates quoted in the architecture document were estimates. On the model, a serial bit takes
+   two instructions, 8 cycles (6 Mbit/s at 48 MHz), and an SPI controller bit three instructions, 12
+   cycles (4 MHz); the SPI test exchanges a byte each way at that rate and faults at 10 cycles.
