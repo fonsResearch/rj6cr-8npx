@@ -1,9 +1,9 @@
 # Machine model: threads, time and pins
 
-Draft 0.1 of 2026-11-14. Normative once frozen; until then `spec/model.ml` and this text are changed
+Draft 0.2 of 2026-11-14. Normative once frozen; until then `spec/model.ml` and this text are changed
 together. Scope: the three program threads, their timing hardware, the pad stage, memory windows, faults.
-Not yet specified, and named here only where they touch the core: host port and loader, line unit,
-response rules, rule engine, trace. Instruction encodings are in `isa.md`, generated from `spec/isa.ml`.
+The rule engine is in `rules.md`. Not yet specified, and named here only where they touch the core: host
+port and loader, line unit, response rules, trace. Instruction encodings are in `isa.md`, generated from `spec/isa.ml`.
 
 Every statement below is implemented in `spec/model.ml`; the tests named in section 12 show the timing
 statements on running programs.
@@ -70,7 +70,7 @@ Bits [25:24] of every timed instruction select what follows its own effect:
 | tm | name | meaning |
 |---|---|---|
 | 0 | | nothing |
-| 1 | `@now` | commit in the effect cycle e: the pads change in cycle e |
+| 1 | `@now` | commit as soon as possible: the pads change in cycle e + 1 |
 | 2 | `@at` | arm a commit for the deadline t: the pads change in cycle t |
 | 3 | `@adv` | as `@at`, and when the commit happens t := t + p |
 
@@ -82,11 +82,17 @@ Bits [25:24] of every timed instruction select what follows its own effect:
 - **Arming** in effect cycle e is on time iff `t - e >= 1`, taken as a signed 32-bit difference. The
   thread then continues with its next instructions while the commit is armed.
 - **Late.** If `t - e < 1`: with the strict policy the thread faults LATE and the instruction has no
-  effect; with the lenient policy the commit happens in cycle e, t := e (then `+ p` for `@adv`) and the
-  sticky LATE status bit is set. The policy is host configuration per thread.
-- **Firing.** In cycle t - 1 the armed commit fires: the pads have the new values during cycle t, `cap`
-  holds the pins as read in cycle t - 1, and the commit is no longer armed. While the rule engine holds
-  the thread (section 11), firing is postponed.
+  effect; with the lenient policy the commit is carried out as soon as possible (the pads change in cycle
+  e + 1) and the sticky LATE status bit is set. The policy is host configuration per thread.
+- **One path for every commit.** Instructions never change the pads themselves. `@now`, `@at`, `@adv`,
+  the commit of an event wait and the safe pattern after a fault all leave a pending commit, which the
+  timing hardware carries out. A pending commit is due from cycle t - 1 (deadline commits) or at once
+  (the others), and it fires in the first cycle in which it is due and the rule engine does not block it
+  (`rules.md`, section 7).
+- **Firing** in cycle n: the pads have the new values during cycle n + 1, `cap` holds the pins as read
+  in cycle n, and the commit is no longer pending. Without a block, a deadline commit fires in cycle
+  t - 1, so the pads change in cycle t. If it fires in any other cycle, because it was late or blocked,
+  t is set to n + 1, the cycle in which the pads change; `@adv` then adds p.
 - **Order within a cycle.** Timing events are applied first; an instruction in its execute cycle acts on
   the result. An instruction whose execute cycle is the cycle in which the armed commit fires is
   therefore not kept waiting and sees the new capture.
@@ -111,12 +117,14 @@ WAITP (a pin: low, high, rising, falling) and WAITS (a status bit equal to a val
 sleep from their effect cycle e. In every cycle n >= e the condition is evaluated on the values read in
 cycle n; an edge compares cycle n with cycle n - 1.
 
-- **Event** in cycle n: the pads take the staged values in cycle n + 1 if `cm` = 1 (otherwise the staged
-  set is kept); `cap` holds the pins as read in cycle n; status bit EV := 1; if `re` = 1 then t := n + 1
-  with fraction 0; if `adv` = 1 then t := t + p; the thread runs again from cycle n + 1.
-- **Deadline**, only if `to` = 1, in cycle t - 1 without an event in that cycle: as an armed commit, and
-  EV := 0. Lateness at e is handled as in section 5; under the lenient policy the timeout is taken in
-  cycle e.
+- **Event** first seen in cycle n: if `cm` = 1 the staged set becomes a pending commit that is due at
+  once (otherwise it is kept and nothing is pending). When it fires, in cycle n unless a rule blocks it,
+  or immediately if `cm` = 0: `cap` holds the pins as read in that cycle; status bit EV := 1; if `re` = 1
+  then t := that cycle + 1 with fraction 0; if `adv` = 1 then t := t + p; the thread runs again from the
+  next cycle.
+- **Deadline**, only if `to` = 1, in cycle t - 1 without an event up to that cycle: the staged set is
+  committed as a deadline commit, and EV := 0. Lateness at e is handled as in section 5; under the
+  lenient policy the timeout is due in cycle e.
 - With `to` = 0 and a condition that never holds the thread sleeps until the host stops it.
 
 From the pad to the pad, a reaction with `cm` = 1 is constant: an input level first sampled at the edge
@@ -145,10 +153,11 @@ least 12 cycles after the cycle in which the event commit became visible; with `
   empty, PUSH while its queue is full. Channels 1 to 3 are reserved for thread-to-thread bridges; without
   them an access waits for ever.
 - Status bits (BST, WAITS, I/O register 0): 0 EV, 1 mailbox from host not empty, 2 mailbox to host not
-  full, 3 LATE (sticky). Bits 4 to 15 read 0 until the line unit, response rule and rule engine documents
-  define them.
-- I/O register 0: read gives the status bits; writing 1 to bit 0 or bit 3 clears EV or LATE. Any other
-  address is the fault IOPERM until the documents of the other blocks define it.
+  full, 3 LATE (sticky), 4 FAIL recorded, 5 BLAME recorded, 6 a rule was repaired (`rules.md`). Bits 7 to
+  15 read 0 until the line unit and response rule documents define them.
+- I/O register 0: read gives the status bits; writing 1 to bit 0 or bit 3 clears EV or LATE. Registers
+  0x20 and up are the rule measurements (`rules.md`, section 8). Any other address is the fault IOPERM
+  until the documents of the other blocks define it.
 
 ## 9. Faults
 
@@ -163,9 +172,10 @@ least 12 cycles after the cycle in which the event commit became visible; with `
 | TRAP | the TRAP instruction, with its code |
 | RULE | fail-stop by the rule engine, with the rule number |
 
-A faulting instruction has no other effect. The thread stops with `pc` at that instruction, an armed
-commit is cancelled, its staged set is cleared, and from the effect cycle its pins hold the safe pattern.
-HALT stops the thread and leaves its pins as they are.
+A faulting instruction has no other effect. The thread stops with `pc` at that instruction. Whatever
+was staged or pending is replaced by the safe pattern of all its pins as a pending commit, due at once:
+the pins hold the safe pattern from cycle e + 1, or later if a rule blocks that commit. HALT stops the
+thread and leaves its pins as they are.
 
 ## 10. Instruction semantics
 
@@ -183,9 +193,7 @@ The table in `isa.md` gives one line per instruction; where it is not exhaustive
 
 ## 11. Hooks for blocks not yet specified
 
-- `hold(T)`: while the rule engine asserts it, an armed commit of thread T does not fire. How a held
-  commit moves t, and how hold applies to the commit of an event wait, belongs to the rule document.
-- EMIT produces (effect cycle, thread, code) for the rule engine and the trace.
+- EMIT produces (thread, code) in its execute cycle for the rule engine, and for the trace.
 - Host: loading, start and stop of a thread, windows, pin configuration, mailbox access.
 
 ## 12. Tests
@@ -199,12 +207,13 @@ The table in `isa.md` gives one line per instruction; where it is not exhaustive
 | UART frame | bit boundaries at `t0 + floor(k * 416.668)` |
 | one edge every 4 cycles | section 5, consequence 1, three threads, five alignments |
 | event wait | constant 2-cycle reaction; 12-cycle rule of section 6, and the fault at 11 |
+| event wait with adv | the 8-cycle rule of section 6, and the fault at 7 |
 | a deadline that has passed | strict and lenient policy |
 | faults leave the pins in the safe pattern | section 9 |
 | isolation | thread 0's trace is identical with and without two running neighbours |
 | host mailbox round trip | PULL, ST, LD, PUSH |
 
-These are examples, not proofs. The claims of the architecture document are proved on the RTL against a
+The rule engine's tests are listed in `rules.md`. These are examples, not proofs. The claims of the architecture document are proved on the RTL against a
 circuit form of this model in a later step.
 
 ## 13. State
@@ -214,20 +223,20 @@ circuit form of this model in a later step.
 | registers | 128 |
 | pc | 10 |
 | deadline t, period p | 40 + 32 |
-| armed, due, adv | 3 |
+| pending commit: armed, due, adv, deadline | 4 |
 | staged set | 48 |
 | capture | 24 |
 | state, fault code and argument | 15 |
 | EV, LATE | 2 |
 | slack minimum | 16 |
-| event-wait condition | 12 |
+| event-wait condition and phase | 14 |
 | windows, late policy | 41 |
 | mailboxes (D = 1) | 34 |
-| total | 405 |
+| total | 408 |
 
 Shared: `now` 32; pad registers 24; pin configuration (owner, open drain, safe pattern, filter length)
-108; synchronisers, filter counters and previous values 88. Core state: 3 x 405 + 252 = 1,467 bits, not
-counting pipeline registers.
+108; synchronisers, filter counters and previous values 88. Core state: 3 x 408 + 252 = 1,476 bits, not
+counting pipeline registers. Rule engine: 122 bits per rule and 131 shared (`rules.md`, section 9).
 
 ## 14. Decisions taken in this draft
 
@@ -244,16 +253,15 @@ To be confirmed or changed when the documents are frozen.
 | D7 | non-zero unused bits are ILLEGAL | ignoring them is slightly smaller but gives one instruction many encodings |
 | D8 | mailbox depth is a generator parameter | fixed depth 4 costs about 300 more flip-flops |
 | D9 | CRC as a register-to-register step of 1 or 8 bits | a per-thread CRC register adds state; a 16-bit step is deeper logic |
-| D10 | lenient late policy re-anchors t to the actual commit | keeping t would make every later deadline late as well |
+| D10 | a deadline commit that fires late, or is held by a rule, re-anchors t to the actual pad change | keeping t would make every later deadline late as well |
+| D11 | every commit goes through the timing hardware, so `@now` changes the pads one cycle after the effect cycle | committing inside the instruction saves that cycle but puts the rule check into the execute stage and gives the pads a second writer |
 
 ## 15. Open points
 
-1. Hold and event waits (section 11).
-2. Start and stop of a thread by the host, and what start resets.
-3. Whether the "timing events first" order, which puts the fire decision in front of the execute stage,
-   meets 48 MHz once the rule engine's hold is in that path. Fallback: decide hold one cycle earlier from
-   registered values.
-4. Status bits 4 to 15 and the I/O register map.
-5. Firmware rates quoted in the architecture document are estimates; from the rules above a serial bit
+1. Start and stop of a thread by the host, and what start resets.
+2. Whether the "timing events first" order, which puts the fire decision in front of the execute stage,
+   meets 48 MHz with the rule engine's blocking decision in that path (`rules.md`, open point 2).
+3. Status bits 7 to 15 and the rest of the I/O register map.
+4. Firmware rates quoted in the architecture document are estimates; from the rules above a serial bit
    needs 8 cycles (6 Mbit/s at 48 MHz) and an SPI controller bit with a clocked shift 12 cycles (4 MHz).
    Neither SPI figure is demonstrated by a test yet.

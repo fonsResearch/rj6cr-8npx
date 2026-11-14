@@ -79,7 +79,7 @@ let%expect_test "UART frame: every edge on its deadline, no drift" =
   Printf.printf "all bit boundaries at floor(k * p): %b; thread %s; slack minimum %d\n" ok (state_name chip.th.(0))
     chip.th.(0).slack_min;
   [%expect {|
-    cycle    20  tx=1  offset -24
+    cycle    21  tx=1  offset -23
     cycle    44  tx=0  offset 0
     cycle   460  tx=1  offset 416
     cycle   877  tx=0  offset 833
@@ -168,7 +168,7 @@ let%expect_test "event wait: constant latency and re-anchored deadline" =
     distance 11, input sampled high at cycle 40: out=1 at 42 (+2), out=0 at 53 (+13); halted, slack minimum 1
     distance 11, input sampled high at cycle 41: out=1 at 43 (+2), out=0 at 54 (+13); halted, slack minimum 2
     distance 11, input sampled high at cycle 42: out=1 at 44 (+2), out=0 at 55 (+13); halted, slack minimum 3
-    distance 11, input sampled high at cycle 43: out=1 at 45 (+2), out=0 at 56 (+13); fault LATE, slack minimum 0
+    distance 11, input sampled high at cycle 43: out=1 at 45 (+2), out=0 at 57 (+14); fault LATE, slack minimum 0
     |}]
 ;;
 
@@ -203,7 +203,7 @@ let%expect_test "event wait with adv: 8 cycles to the next edge" =
     period 7, input sampled high at cycle 40: out=1 at 42 (+2), out=0 at 49 (+9); halted, slack minimum 1
     period 7, input sampled high at cycle 41: out=1 at 43 (+2), out=0 at 50 (+9); halted, slack minimum 2
     period 7, input sampled high at cycle 42: out=1 at 44 (+2), out=0 at 51 (+9); halted, slack minimum 3
-    period 7, input sampled high at cycle 43: out=1 at 45 (+2), out=0 at 52 (+9); fault LATE, slack minimum 0
+    period 7, input sampled high at cycle 43: out=1 at 45 (+2), out=0 at 53 (+10); fault LATE, slack minimum 0
     |}]
 ;;
 
@@ -220,7 +220,7 @@ let%expect_test "a deadline that has passed: fault, or commit at once and flag" 
     [ true; false ];
   [%expect {|
     strict=true: fault LATE; edges: ; late flag false; slack minimum -2
-    strict=false: halted; edges: 8->1; late flag true; slack minimum -2
+    strict=false: halted; edges: 9->1; late flag true; slack minimum -2
     |}]
 ;;
 

@@ -1,8 +1,10 @@
 (* Reference model of the core: three threads, their timing hardware and the pad stage,
    one call of [step] per clock cycle. It is the executable form of doc/spec/machine.md.
 
+   and of the rule engine (doc/spec/rules.md).
+
    Not modelled yet (their documents are not written): host port and loader, line unit,
-   response rules, rule engine (only its [hold] input exists), trace. *)
+   response rules, trace. *)
 open Isa
 
 let m16 = 0xFFFF
@@ -50,6 +52,34 @@ type wait =
   ; w_cm : bool
   ; w_re : bool
   ; w_adv : bool
+  ; mutable w_due : int (* 0 waiting, 1 event seen, 2 deadline reached; not 0: commit pending *)
+  }
+
+(* One interval rule (doc/spec/rules.md). *)
+type rule =
+  { mutable en : bool
+  ; mutable guarantee : bool (* false: assumption about the peer *)
+  ; mutable policy : int (* 0 observe, 1 hold to minimum, 2 fail-stop, 3 as 0 *)
+  ; mutable owner : int (* thread 0..2, 3 none *)
+  ; mutable ps : int (* time unit 16^ps cycles *)
+  ; mutable sel_start : int
+  ; mutable sel_stop : int
+  ; mutable sel_abort : int
+  ; mutable rmin : int
+  ; mutable rmax : int
+  ; mutable active : bool
+  ; mutable cnt : int
+  ; mutable v_min : bool
+  ; mutable v_max : bool
+  ; mutable repaired : bool
+  ; mutable obs_min : int
+  ; mutable obs_max : int
+  }
+
+type verdict =
+  { v_rule : int
+  ; v_max_kind : bool (* false: minimum violated, true: maximum *)
+  ; v_cycle : int
   }
 
 type thread =
@@ -63,6 +93,7 @@ type thread =
   ; mutable armed : bool
   ; mutable due : bool
   ; mutable adv : bool
+  ; mutable deadline : bool (* the armed commit belongs to the deadline t *)
   ; mutable sv : int
   ; mutable sm : int
   ; mutable ev : int
@@ -103,24 +134,39 @@ type chip =
   ; mutable pv_prev : int
   ; mutable emits : (int * int * int) list (* cycle, thread, code; newest first *)
   ; fifo_depth : int
-  ; mutable hold : int -> bool (* rule engine: hold this thread's armed commit *)
+  ; rules : rule array
+  ; mutable first_fail : verdict option
+  ; mutable first_blame : verdict option
+  ; mutable blame_before_fail : bool
+  ; oe_hist : int array (* oe_hist.(k): uio_oe during cycle now - k *)
+  ; mutable ev_rise : int (* edges committed in the current cycle, P0..P15 *)
+  ; mutable ev_fall : int
+  ; mutable cyc_emits : (int * int) list (* EMITs executed in the current cycle *)
   }
 
 let no_owner = 7
 
 let new_thread id =
   { id; state = Idle; r = Array.make 8 0; pc = 0; t_int = 0; t_frac = 0; p = 0
-  ; armed = false; due = false; adv = false; sv = 0; sm = 0; ev = 0; em = 0; cap = 0
+  ; armed = false; due = false; adv = false; deadline = false; sv = 0; sm = 0; ev = 0; em = 0; cap = 0
   ; evf = false; late = false; slack_min = 32767; wait = None
   ; pbase = 0; psize = 0; dbase = 0; dsize = 0; strict = true
   ; flight = None; mem_rd = 0; inbox = Queue.create (); outbox = Queue.create () }
 ;;
 
-let create ?(fifo_depth = 1) () =
+let new_rule () =
+  { en = false; guarantee = false; policy = 0; owner = 3; ps = 0; sel_start = 0x380; sel_stop = 0x380
+  ; sel_abort = 0x380; rmin = 0; rmax = 0xFFFF; active = false; cnt = 0; v_min = false; v_max = false
+  ; repaired = false; obs_min = 0xFFFF; obs_max = 0 }
+;;
+
+let create ?(fifo_depth = 1) ?(n_rules = 4) () =
   { now = 0; prog = Array.make 512 0; data = Array.make 1024 0; th = Array.init 3 new_thread
   ; value = 0; dir = 0; value_n = 0; dir_n = 0; owner = Array.make 16 no_owner; od = 0
   ; safe_val = 0; safe_dir = 0; filt = Array.make 24 0; x = 0; s = 0; fcnt = Array.make 24 0
-  ; pv_prev = 0; emits = []; fifo_depth; hold = (fun _ -> false) }
+  ; pv_prev = 0; emits = []; fifo_depth; rules = Array.init n_rules (fun _ -> new_rule ())
+  ; first_fail = None; first_blame = None; blame_before_fail = false; oe_hist = Array.make 8 0
+  ; ev_rise = 0; ev_fall = 0; cyc_emits = [] }
 ;;
 
 (* --- what the host can do; each call takes effect at a clock edge --- *)
@@ -141,9 +187,18 @@ let set_owner chip pin tid =
 
 let start chip tid ~pc =
   let th = chip.th.(tid) in
-  th.pc <- pc; th.state <- Run; th.flight <- None; th.armed <- false; th.due <- false
+  th.pc <- pc; th.state <- Run; th.flight <- None; th.armed <- false; th.due <- false; th.deadline <- false
   ; th.sm <- 0; th.em <- 0; th.sv <- 0; th.ev <- 0; th.wait <- None; th.evf <- false
   ; th.late <- false; th.slack_min <- 32767
+;;
+
+let set_rule chip k ?(guarantee = true) ?(policy = 0) ?(owner = 3) ?(ps = 0) ?(abort = 0x380) ?(min = 0)
+  ?(max = 0xFFFF) ~start ~stop () =
+  let r = chip.rules.(k) in
+  r.en <- true; r.guarantee <- guarantee; r.policy <- policy; r.owner <- owner; r.ps <- ps
+  ; r.sel_start <- start; r.sel_stop <- stop; r.sel_abort <- abort; r.rmin <- min; r.rmax <- max
+  ; r.active <- false; r.cnt <- 0; r.v_min <- false; r.v_max <- false; r.repaired <- false
+  ; r.obs_min <- 0xFFFF; r.obs_max <- 0
 ;;
 
 let host_push chip tid v =
@@ -191,16 +246,101 @@ let status chip th =
   (if th.evf then 1 else 0)
   lor (if Queue.is_empty th.inbox then 0 else 2)
   lor (if Queue.length th.outbox < chip.fifo_depth then 4 else 0)
-  lor if th.late then 8 else 0
+  lor (if th.late then 8 else 0)
+  lor (if chip.first_fail <> None then 16 else 0)
+  lor (if chip.first_blame <> None then 32 else 0)
+  lor if Array.exists (fun r -> r.repaired) chip.rules then 64 else 0
 ;;
 
+(* A fault stops the thread and turns the safe pattern of its pins into a pending commit,
+   which goes through the same path, and the same rule check, as every other commit. *)
 let enter_fault chip th f =
-  th.state <- Faulted f; th.armed <- false; th.due <- false; th.wait <- None; th.flight <- None
-  ; th.sm <- 0; th.em <- 0; th.sv <- 0; th.ev <- 0;
   let own = owned_mask chip th.id in
-  chip.value_n <- chip.value_n land lnot own lor (chip.safe_val land own);
-  let own8 = own land 0xFF in
-  chip.dir_n <- chip.dir_n land lnot own8 lor (chip.safe_dir land own8)
+  th.state <- Faulted f; th.wait <- None; th.flight <- None
+  ; th.sm <- own; th.sv <- chip.safe_val land own; th.em <- own land 0xFF
+  ; th.ev <- chip.safe_dir land own land 0xFF
+  ; th.armed <- true; th.due <- true; th.deadline <- false; th.adv <- false
+;;
+
+(* --- rule engine: selectors, hold, verdicts --- *)
+
+(* Event selector: [9:7] class, [6:5] qualifier, [4:0] index. Anything not listed never fires.
+   class 0 / 1: rising / falling edge of pin index (0..23) as read; qualifier 0 any, 1 the
+                peer's, 2 our own
+   class 2 / 3: a commit raises / lowers the value of pin index (0..15)
+   class 5:     the rule's owner thread executes EMIT with code index (0..31) *)
+let decode_sel sel =
+  let cls = (sel lsr 7) land 7 and q = (sel lsr 5) land 3 and idx = sel land 31 in
+  if sel lsr 10 <> 0
+  then None
+  else (
+    match cls with
+    | 0 | 1 -> if idx <= 23 && q <= 2 then Some (cls, q, idx) else None
+    | 2 | 3 -> if idx <= 15 && q = 0 then Some (cls, q, idx) else None
+    | 5 -> if q = 0 then Some (cls, q, idx) else None
+    | _ -> None)
+;;
+
+let sel ?(qual = 0) cls idx = (cls lsl 7) lor (qual lsl 5) lor idx
+
+(* Edges the pending commit of a thread would put on the pad value registers. *)
+let proposed chip th =
+  let m = th.sm land owned_mask chip th.id in
+  m land th.sv land lnot chip.value, m land lnot th.sv land chip.value
+;;
+
+let record chip ~n k ~max_kind =
+  let r = chip.rules.(k) in
+  if max_kind then r.v_max <- true else r.v_min <- true;
+  let v = Some { v_rule = k; v_max_kind = max_kind; v_cycle = n } in
+  if r.guarantee
+  then (
+    if chip.first_fail = None
+    then begin
+      chip.first_fail <- v;
+      chip.blame_before_fail <- chip.first_blame <> None
+    end)
+  else if chip.first_blame = None
+  then chip.first_blame <- v
+;;
+
+(* May the pending commit of this thread reach the pads in cycle n? Decided from the rule
+   state of this cycle only. A guarantee rule with policy hold or fail-stop that is active
+   below its minimum blocks a commit containing its stop edge. Fail-stop also faults the
+   thread, whose safe pattern then waits in the same way. *)
+let may_fire chip th ~n =
+  let rise, fall = proposed chip th in
+  let blocking = ref [] in
+  Array.iteri
+    (fun k r ->
+      if r.en && r.guarantee && (r.policy = 1 || r.policy = 2) && r.active && r.cnt < r.rmin
+      then (
+        match decode_sel r.sel_stop with
+        | Some (2, _, pin) when (rise lsr pin) land 1 = 1 -> blocking := k :: !blocking
+        | Some (3, _, pin) when (fall lsr pin) land 1 = 1 -> blocking := k :: !blocking
+        | _ -> ()))
+    chip.rules;
+  match List.rev !blocking with
+  | [] -> true
+  | ks ->
+    let faulted = match th.state with Faulted _ -> true | _ -> false in
+    (match List.find_opt (fun k -> chip.rules.(k).policy = 2) ks with
+     | Some k when not faulted ->
+       record chip ~n k ~max_kind:false;
+       enter_fault chip th (Rule k)
+     | _ -> List.iter (fun k -> if chip.rules.(k).policy = 1 then chip.rules.(k).repaired <- true) ks);
+    false
+;;
+
+(* The commit of a thread fires: its edges are events of this cycle. *)
+let fire chip th ~pv ~staged =
+  if staged
+  then begin
+    let rise, fall = proposed chip th in
+    chip.ev_rise <- chip.ev_rise lor rise;
+    chip.ev_fall <- chip.ev_fall lor fall
+  end;
+  commit chip th ~pv ~staged
 ;;
 
 (* --- instruction semantics --- *)
@@ -397,9 +537,9 @@ let execute chip th ~n ~pv w =
        t_int := (r.(a "ra") lsl 16) lor r.(a "rb");
        t_frac := 0
      | Waitp ->
-       new_wait := Some { on_pin = true; idx = a "pin"; cond = a "cond"; w_to = a "to" = 1; w_cm = a "cm" = 1; w_re = a "re" = 1; w_adv = a "adv" = 1 }
+       new_wait := Some { on_pin = true; idx = a "pin"; cond = a "cond"; w_to = a "to" = 1; w_cm = a "cm" = 1; w_re = a "re" = 1; w_adv = a "adv" = 1; w_due = 0 }
      | Waits ->
-       new_wait := Some { on_pin = false; idx = a "bit"; cond = a "sense"; w_to = a "to" = 1; w_cm = a "cm" = 1; w_re = a "re" = 1; w_adv = a "adv" = 1 }
+       new_wait := Some { on_pin = false; idx = a "bit"; cond = a "sense"; w_to = a "to" = 1; w_cm = a "cm" = 1; w_re = a "re" = 1; w_adv = a "adv" = 1; w_due = 0 }
      | Pull ->
        if a "ch" <> 0 || Queue.is_empty th.inbox then raise Blocked;
        regw := Some (a "rd", Queue.peek th.inbox);
@@ -410,8 +550,30 @@ let execute chip th ~n ~pv w =
        later (fun () -> Queue.push v th.outbox)
      | Emit ->
        let code = a "code" in
-       later (fun () -> chip.emits <- (e, th.id, code) :: chip.emits)
-     | Ior -> if a "addr" = 0 then regw := Some (a "rd", st) else raise (Fault_exn Ioperm)
+       later (fun () ->
+         chip.emits <- (e, th.id, code) :: chip.emits;
+         chip.cyc_emits <- (th.id, code) :: chip.cyc_emits)
+     | Ior ->
+       let addr = a "addr" in
+       let k = (addr - 0x20) / 4 in
+       if addr = 0
+       then regw := Some (a "rd", st)
+       else if addr >= 0x20 && k < Array.length chip.rules
+       then (
+         let r = chip.rules.(k) in
+         let v =
+           match addr land 3 with
+           | 0 ->
+             (if r.active then 1 else 0)
+             lor (if r.v_min then 2 else 0)
+             lor (if r.v_max then 4 else 0)
+             lor if r.repaired then 8 else 0
+           | 1 -> r.obs_min
+           | 2 -> r.obs_max
+           | _ -> r.cnt
+         in
+         regw := Some (a "rd", v))
+       else raise (Fault_exn Ioperm)
      | Iow | Iowi ->
        if a "addr" <> 0 then raise (Fault_exn Ioperm);
        clr := if i.def.op = Iow then r.(a "ra") else a "imm");
@@ -428,22 +590,16 @@ let execute chip th ~n ~pv w =
     if !clr land 1 <> 0 then th.evf <- false;
     if !clr land 8 <> 0 then th.late <- false;
     if is_late then th.late <- true;
+    (* every commit is carried out by the timing hardware, from the next cycle on *)
     (match i.tm with
-     | 1 -> commit chip th ~pv ~staged:true
+     | 1 ->
+       th.armed <- true; th.due <- true; th.deadline <- false; th.adv <- false
      | 2 | 3 ->
-       if is_late
-       then begin
-         commit chip th ~pv ~staged:true;
-         th.t_int <- e;
-         if i.tm = 3 then add_p th
-       end
-       else begin
-         th.armed <- true; th.due <- false; th.adv <- i.tm = 3
-       end
+       th.armed <- true; th.due <- is_late; th.deadline <- true; th.adv <- i.tm = 3
      | _ -> ());
     (match !new_wait with
      | Some wt ->
-       if is_late then th.t_int <- (e + 1) land m32;
+       if is_late then wt.w_due <- 2;
        th.state <- Wait_ev;
        th.wait <- Some wt
      | None -> ());
@@ -454,48 +610,134 @@ let execute chip th ~n ~pv w =
   | Fault_exn f -> enter_fault chip th f
 ;;
 
-(* Timing hardware of one thread in cycle n. *)
+(* Timing hardware of one thread in cycle n. A commit that is due fires unless the rule
+   engine blocks it; a deadline commit that fires in another cycle than t - 1, because it
+   was late or blocked, moves t to the cycle in which the pads change. *)
 let timing chip th ~n ~pv ~pv_prev =
-  let reach = th.t_int = (n + 1) land m32 in
+  let next = (n + 1) land m32 in
+  let reach = th.t_int = next in
   if th.armed
   then begin
-    if reach then th.due <- true;
-    if th.due && not (chip.hold th.id)
+    if th.deadline && reach then th.due <- true;
+    if th.due && may_fire chip th ~n
     then begin
-      commit chip th ~pv ~staged:true;
+      fire chip th ~pv ~staged:true;
       th.armed <- false; th.due <- false;
-      if th.adv then add_p th
+      if th.deadline
+      then begin
+        th.t_int <- next;
+        if th.adv then add_p th
+      end
     end
   end;
   match th.state, th.wait with
   | Wait_ev, Some wt ->
-    let hit =
-      if wt.on_pin
-      then (
-        let cur = (pv lsr wt.idx) land 1 and prev = (pv_prev lsr wt.idx) land 1 in
-        match wt.cond with
-        | 0 -> cur = 0
-        | 1 -> cur = 1
-        | 2 -> prev = 0 && cur = 1
-        | _ -> prev = 1 && cur = 0)
-      else (status chip th lsr wt.idx) land 1 = wt.cond
-    in
-    if hit
+    if wt.w_due = 0
     then begin
-      commit chip th ~pv ~staged:wt.w_cm;
-      th.evf <- true;
-      if wt.w_re then (th.t_int <- (n + 1) land m32; th.t_frac <- 0);
-      if wt.w_adv then add_p th;
-      th.state <- Run; th.wait <- None
-    end
-    else if wt.w_to && reach
+      let hit =
+        if wt.on_pin
+        then (
+          let cur = (pv lsr wt.idx) land 1 and prev = (pv_prev lsr wt.idx) land 1 in
+          match wt.cond with
+          | 0 -> cur = 0
+          | 1 -> cur = 1
+          | 2 -> prev = 0 && cur = 1
+          | _ -> prev = 1 && cur = 0)
+        else (status chip th lsr wt.idx) land 1 = wt.cond
+      in
+      if hit then wt.w_due <- 1 else if wt.w_to && reach then wt.w_due <- 2
+    end;
+    if wt.w_due <> 0
     then begin
-      commit chip th ~pv ~staged:true;
-      th.evf <- false;
-      if wt.w_adv then add_p th;
-      th.state <- Run; th.wait <- None
+      let with_commit = wt.w_due = 2 || wt.w_cm in
+      if (not with_commit) || may_fire chip th ~n
+      then begin
+        fire chip th ~pv ~staged:with_commit;
+        if wt.w_due = 1
+        then begin
+          th.evf <- true;
+          if wt.w_re then (th.t_int <- next; th.t_frac <- 0)
+        end
+        else begin
+          th.evf <- false;
+          th.t_int <- next
+        end;
+        if wt.w_adv then add_p th;
+        th.state <- Run; th.wait <- None
+      end
     end
   | _ -> ()
+;;
+
+(* Rule engine, end of cycle n: every enabled rule sees the events of this cycle. *)
+let rules_update chip ~n ~pv ~pv_prev =
+  let wire_rise = pv land lnot pv_prev and wire_fall = pv_prev land lnot pv in
+  (* An edge read on a bidirectional pin is the peer's iff our driver was off throughout a
+     window around the two samples it lies between (one cycle of margin on each side for
+     pad delay); P16..P23 are always the peer's, P8..P15 always ours. *)
+  let peer pin =
+    if pin >= 16
+    then true
+    else if pin >= 8
+    then false
+    else (
+      let f = chip.filt.(pin) in
+      List.for_all (fun k -> (chip.oe_hist.(k + f) lsr pin) land 1 = 0) [ 1; 2; 3; 4 ])
+  in
+  let event (r : rule) s =
+    match decode_sel s with
+    | Some (((0 | 1) as c), q, pin) ->
+      ((if c = 0 then wire_rise else wire_fall) lsr pin) land 1 = 1
+      && (q = 0 || (q = 1) = peer pin)
+    | Some (2, _, pin) -> (chip.ev_rise lsr pin) land 1 = 1
+    | Some (3, _, pin) -> (chip.ev_fall lsr pin) land 1 = 1
+    | Some (5, _, code) -> r.owner <= 2 && List.mem (r.owner, code) chip.cyc_emits
+    | _ -> false
+  in
+  let unit_mask (r : rule) = (1 lsl (4 * r.ps)) - 1 in
+  let violations = ref [] in
+  Array.iteri
+    (fun k r ->
+      if not r.en
+      then r.active <- false
+      else begin
+        let tick = if n land unit_mask r = unit_mask r then 1 else 0 in
+        let start_ev = event r r.sel_start and stop_ev = event r r.sel_stop and abort_ev = event r r.sel_abort in
+        if r.active
+        then
+          if abort_ev
+          then r.active <- false
+          else if r.cnt > r.rmax
+          then begin
+            violations := (k, true) :: !violations;
+            r.active <- false
+          end
+          else if stop_ev
+          then begin
+            if r.cnt < r.rmin then violations := (k, false) :: !violations;
+            r.obs_min <- min r.obs_min r.cnt;
+            r.obs_max <- max r.obs_max r.cnt;
+            r.active <- false
+          end
+          else r.cnt <- min 0xFFFF (r.cnt + tick);
+        if (not r.active) && start_ev
+        then begin
+          r.active <- true;
+          r.cnt <- tick
+        end
+      end)
+    chip.rules;
+  List.iter
+    (fun (k, max_kind) ->
+      record chip ~n k ~max_kind;
+      let r = chip.rules.(k) in
+      if r.policy = 2 && r.owner <= 2
+      then (
+        let th = chip.th.(r.owner) in
+        match th.state with
+        | Faulted _ | Idle -> ()
+        | _ -> enter_fault chip th (Rule k)))
+    (List.rev !violations)
 ;;
 
 (* One clock cycle. [pad] holds the levels of P0..P7 and P16..P23 sampled by the first
@@ -524,6 +766,10 @@ let step chip ~pad =
   let pv_prev = chip.pv_prev in
   chip.value_n <- chip.value;
   chip.dir_n <- chip.dir;
+  chip.oe_hist.(0) <- uio_oe chip;
+  chip.ev_rise <- 0;
+  chip.ev_fall <- 0;
+  chip.cyc_emits <- [];
   Array.iter
     (fun th ->
       (* fetch, on the state the thread has during this cycle *)
@@ -540,6 +786,8 @@ let step chip ~pad =
         execute chip th ~n ~pv w
       | _ -> ())
     chip.th;
+  rules_update chip ~n ~pv ~pv_prev;
+  for k = 7 downto 1 do chip.oe_hist.(k) <- chip.oe_hist.(k - 1) done;
   (* pins without a thread as owner hold the safe pattern *)
   let unowned = ref 0 in
   Array.iteri (fun q o -> if o < 0 || o > 2 then unowned := !unowned lor (1 lsl q)) chip.owner;
