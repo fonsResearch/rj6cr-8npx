@@ -70,18 +70,24 @@ Utilisation = (routed standard cells + macros) / core. Routed with margin at 43.
 +0.5 ns slow slack at 53.5 %; did not converge near 68 %. Routed cell area was 1.33 x local synthesis.
 Nothing has been routed at 48 MHz or on 8x4 with this design.
 
-## 7. Continuous integration (checked 2026-11-13)
+## 7. Continuous integration
 
 - The hardening workflow of the earlier 6x4 design took a median of 240 minutes wall time per run (12
   runs, GitHub API run timing).
-- This repository is private and its organisation is on the free plan: 2,000 included runner minutes per
-  month (GitHub plan documentation). The hardening workflow here is therefore manual-trigger only.
-- First push, 2026-11-13: the test workflow's cocotb test passed, but its artifact upload failed with
-  "Artifact storage quota has been hit". The quota is per account, so a hardening run in this repository
-  would fail to upload its results as well until storage is freed or the repository is public. The docs
-  workflow failed on the unfilled pinout and `docs/info.md`. With provisional content in both (push of
-  2026-11-14) its checks and the document build pass, and it fails at the artifact upload for the same
-  quota reason.
+- While this repository was private (until 2026-11-14) the docs and test workflows failed only at the
+  artifact upload: the account's artifact storage quota was exhausted. Since it is public both pass.
+- The hardening workflow is started by hand (Actions tab or API), not by a push.
+- **First hardening run, 2026-11-14** (run 43545793352, commit 84cfbe5: the template's example design as
+  placeholder, template settings, 8x4, 20.83 ns). All four jobs passed.
+  - gds job 54.9 minutes, of which Magic DRC about 47 on an almost empty tile, with no errors. Magic DRC
+    is the only DRC inside this job with the template settings (`RUN_KLAYOUT_DRC` is 0).
+  - Floorplan: die 0 0 1724.16 710.64, core 2.88 3.78 1721.28 706.86, core area 1,208,172.672 um^2.
+  - Precheck 18 minutes, passed. It runs the IHP-SG13CMOS5L KLayout DRC runset (FEOL, BEOL, pin and
+    forbidden-layer rules, about 16 minutes), then zero-area, top macro name, forbidden layer,
+    prBoundary, pin and Verilog syntax checks.
+  - Gate-level test passed.
+- Decision 2026-11-14: Magic DRC stays on, and the hardening job has no time cap of its own (GitHub's
+  limit for a job is 6 hours).
 
 ## 8. Local tools
 
@@ -97,8 +103,8 @@ pins cocotb 2.0.1 and pytest 8.4.2.
 | O1 | 512x32 and 1024x16 macros through this flow and the precheck (only 256x16 has been) | open |
 | O2 | how to verify falling-edge registers, given the Cyclesim result above. Options: no falling-edge registers at all; a two-phase model in Cyclesim at twice the clock with a proof against the emitted Verilog; Verilog-level simulation and formal only for that block | open, decision needed before the both-edge front end is designed |
 | O3 | latch storage from an instantiated cell: simulation model, emitted Verilog, equivalence method | open |
-| O4 | core area from a real 8x4 floorplan report (1,208,173 um^2 is used in the budget; not re-derived here) | open |
+| O4 | core area from a real 8x4 floorplan report | closed 2026-11-14: 1,208,172.672 um^2 (section 7) |
 | O5 | pad and clock frequency limits on this shuttle (the published 33 / 66 MHz figures are for another process) | open |
 | O6 | flow settings at 20.83 ns: setup margins, post-route repair, fanout and wire-length limits, macro halos | open |
-| O7 | where hardening runs execute, given section 7 | decided 2026-11-13: the repository will be made public later; no hardening run before that |
+| O7 | where hardening runs execute | closed 2026-11-14: this repository, public, standard runners |
 | O8 | whether the shuttle submission requires a public repository | open, to be checked in the official submission guide |
