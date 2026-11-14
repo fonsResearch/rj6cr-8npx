@@ -1,0 +1,11 @@
+(library
+ (name spec)
+ (modules isa asm model)
+ (inline_tests)
+ (preprocess
+  (pps ppx_expect)))
+
+(executable
+ (name gen_isa_doc)
+ (modules gen_isa_doc)
+ (libraries spec))

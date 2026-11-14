@@ -1,0 +1,11 @@
+; isa.md is generated from spec/isa.ml. `dune test` fails if it is out of date;
+; `dune promote` updates it.
+(rule
+ (with-stdout-to
+  isa.md.gen
+  (run %{exe:../../spec/gen_isa_doc.exe})))
+
+(rule
+ (alias runtest)
+ (action
+  (diff isa.md isa.md.gen)))
