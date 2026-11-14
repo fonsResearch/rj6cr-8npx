@@ -3,8 +3,9 @@
 
    and of the rule engine (doc/spec/rules.md).
 
-   Not modelled yet (their documents are not written): host port and loader, line unit,
-   response rules, trace. *)
+   and of the host port and loader (doc/spec/host.md).
+
+   Not modelled yet (their documents are not written): line unit, response rules, trace. *)
 open Isa
 
 let m16 = 0xFFFF
@@ -108,10 +109,28 @@ type thread =
   ; mutable dbase : int
   ; mutable dsize : int
   ; mutable strict : bool
+  ; mutable loaded : bool (* the program window holds a completed, checked load *)
+  ; mutable loading : bool
+  ; mutable load_count : int
+  ; mutable crc : int
+  ; mutable digest : int
+  ; mutable entry : int
   ; mutable flight : (int * int) option (* fetch cycle, word; word -1 = fetch outside the window *)
   ; mutable mem_rd : int
   ; inbox : int Queue.t
   ; outbox : int Queue.t
+  }
+
+(* SPI side of the host port. *)
+type host =
+  { mutable count : int (* bits received in this transaction *)
+  ; mutable sh : int (* input shift register *)
+  ; mutable cmd : int
+  ; mutable haddr : int
+  ; mutable osh : int (* output shift register, bit 31 first *)
+  ; mutable miso : int
+  ; mutable rbuf : int (* memory word read ahead *)
+  ; mutable req : (bool * bool * int * int) option (* program memory?, write?, address, data *)
   }
 
 type chip =
@@ -142,6 +161,9 @@ type chip =
   ; mutable ev_rise : int (* edges committed in the current cycle, P0..P15 *)
   ; mutable ev_fall : int
   ; mutable cyc_emits : (int * int) list (* EMITs executed in the current cycle *)
+  ; mutable hstat : int (* host status flags *)
+  ; mutable now_latch : int
+  ; host : host
   }
 
 let no_owner = 7
@@ -151,6 +173,7 @@ let new_thread id =
   ; armed = false; due = false; adv = false; deadline = false; sv = 0; sm = 0; ev = 0; em = 0; cap = 0
   ; evf = false; late = false; slack_min = 32767; wait = None
   ; pbase = 0; psize = 0; dbase = 0; dsize = 0; strict = true
+  ; loaded = false; loading = false; load_count = 0; crc = 0; digest = 0; entry = 0
   ; flight = None; mem_rd = 0; inbox = Queue.create (); outbox = Queue.create () }
 ;;
 
@@ -166,47 +189,9 @@ let create ?(fifo_depth = 1) ?(n_rules = 4) () =
   ; safe_val = 0; safe_dir = 0; filt = Array.make 24 0; x = 0; s = 0; fcnt = Array.make 24 0
   ; pv_prev = 0; emits = []; fifo_depth; rules = Array.init n_rules (fun _ -> new_rule ())
   ; first_fail = None; first_blame = None; blame_before_fail = false; oe_hist = Array.make 8 0
-  ; ev_rise = 0; ev_fall = 0; cyc_emits = [] }
+  ; ev_rise = 0; ev_fall = 0; cyc_emits = []; hstat = 0; now_latch = 0
+  ; host = { count = 0; sh = 0; cmd = 0; haddr = 0; osh = 0; miso = 0; rbuf = 0; req = None } }
 ;;
-
-(* --- what the host can do; each call takes effect at a clock edge --- *)
-
-let load chip ~base words = Array.iteri (fun k w -> chip.prog.((base + k) land 511) <- w land m32) words
-
-let set_window chip tid ~pbase ~psize ~dbase ~dsize =
-  let th = chip.th.(tid) in
-  assert (psize <= 512 && dsize <= 1024);
-  th.pbase <- pbase; th.psize <- psize; th.dbase <- dbase; th.dsize <- dsize
-;;
-
-(* P8 carries the host port's output and cannot be given to a thread. *)
-let set_owner chip pin tid =
-  if pin = 8 || pin < 0 || pin > 15 then invalid_arg "set_owner";
-  chip.owner.(pin) <- tid
-;;
-
-let start chip tid ~pc =
-  let th = chip.th.(tid) in
-  th.pc <- pc; th.state <- Run; th.flight <- None; th.armed <- false; th.due <- false; th.deadline <- false
-  ; th.sm <- 0; th.em <- 0; th.sv <- 0; th.ev <- 0; th.wait <- None; th.evf <- false
-  ; th.late <- false; th.slack_min <- 32767
-;;
-
-let set_rule chip k ?(guarantee = true) ?(policy = 0) ?(owner = 3) ?(ps = 0) ?(abort = 0x380) ?(min = 0)
-  ?(max = 0xFFFF) ~start ~stop () =
-  let r = chip.rules.(k) in
-  r.en <- true; r.guarantee <- guarantee; r.policy <- policy; r.owner <- owner; r.ps <- ps
-  ; r.sel_start <- start; r.sel_stop <- stop; r.sel_abort <- abort; r.rmin <- min; r.rmax <- max
-  ; r.active <- false; r.cnt <- 0; r.v_min <- false; r.v_max <- false; r.repaired <- false
-  ; r.obs_min <- 0xFFFF; r.obs_max <- 0
-;;
-
-let host_push chip tid v =
-  let th = chip.th.(tid) in
-  if Queue.length th.inbox < chip.fifo_depth then (Queue.push (v land m16) th.inbox; true) else false
-;;
-
-let host_pop chip tid = Queue.take_opt chip.th.(tid).outbox
 
 (* --- pins --- *)
 
@@ -740,6 +725,424 @@ let rules_update chip ~n ~pv ~pv_prev =
     (List.rev !violations)
 ;;
 
+(* --- host port: registers, loader, SPI (doc/spec/host.md) --- *)
+
+let running th =
+  match th.state with
+  | Run | Wait_ev -> true
+  | _ -> false
+;;
+
+(* Program digest: CRC-16/CCITT-FALSE over the 32-bit words in address order, bit 31 first. *)
+let crc16_word crc w =
+  let c = ref crc in
+  for k = 31 downto 0 do c := crc_bit ~refl:false !c 0x1021 ((w lsr k) land 1) done;
+  !c
+;;
+
+let digest_of words = Array.fold_left crc16_word 0xFFFF words
+
+(* Host status flags: 0 unknown command, 1 load error, 2 refused, 3 mailbox to the thread
+   was full, 4 mailbox from the thread was empty. *)
+let hflag chip b = chip.hstat <- chip.hstat lor (1 lsl b)
+
+(* A write to the program memory. Inside the window of a running thread it is refused.
+   Inside a window that is being loaded it must be the next word in sequence, and enters the
+   digest. Inside any other window it is done and the window is no longer loaded. *)
+let prog_write chip addr word =
+  let a = addr land 511 in
+  let hits = List.filter (fun th -> a >= th.pbase && a < th.pbase + th.psize) (Array.to_list chip.th) in
+  if List.exists (fun th -> running th || (th.loading && a <> th.pbase + th.load_count)) hits
+  then begin
+    hflag chip 2;
+    false
+  end
+  else begin
+    chip.prog.(a) <- word land m32;
+    List.iter
+      (fun th ->
+        if th.loading
+        then begin
+          th.crc <- crc16_word th.crc (word land m32);
+          th.load_count <- th.load_count + 1
+        end
+        else th.loaded <- false)
+      hits;
+    true
+  end
+;;
+
+(* Stop by the host: as a fault, the pins go to the safe pattern through a pending commit. *)
+let enter_stop chip th =
+  enter_fault chip th Illegal;
+  th.state <- Idle
+;;
+
+let do_start chip th =
+  if th.loaded && (not (running th)) && (not th.armed) && th.dbase + th.dsize <= 1024
+  then begin
+    th.pc <- th.entry; th.state <- Run; th.flight <- None; th.wait <- None
+    ; th.sm <- 0; th.em <- 0; th.sv <- 0; th.ev <- 0; th.evf <- false; th.late <- false
+    ; th.slack_min <- 32767
+  end
+  else hflag chip 2
+;;
+
+let thread_reg addr = if addr >= 0x40 && addr < 0x70 then Some ((addr - 0x40) / 16, addr land 15) else None
+
+let rule_reg chip addr =
+  let k = (addr - 0x80) / 16 in
+  if addr >= 0x80 && k < Array.length chip.rules then Some (k, addr land 15) else None
+;;
+
+let verdict_info v ~flag =
+  match v with
+  | None -> 0, 0
+  | Some v -> 0x8000 lor (if v.v_max_kind then 0x4000 else 0) lor (if flag then 0x2000 else 0) lor v.v_rule, v.v_cycle
+;;
+
+(* Value of a host register; reading has no effect except latching the high half of now. *)
+let reg_peek chip addr =
+  let owners k =
+    let v = ref 0 in
+    for j = 3 downto 0 do v := (!v lsl 4) lor (chip.owner.((4 * k) + j) land 7) done;
+    !v
+  in
+  let filt base =
+    let v = ref 0 in
+    for j = 7 downto 0 do v := (!v lsl 2) lor chip.filt.(base + j) done;
+    !v
+  in
+  let fail_info, fail_cycle = verdict_info chip.first_fail ~flag:chip.blame_before_fail in
+  let blame_info, blame_cycle = verdict_info chip.first_blame ~flag:false in
+  match addr with
+  | 0x00 -> 0x8401
+  | 0x01 -> Array.length chip.rules lor (chip.fifo_depth lsl 4) lor (Array.length chip.th lsl 8)
+  | 0x02 ->
+    chip.now_latch <- chip.now lsr 16;
+    chip.now land m16
+  | 0x03 -> chip.now_latch
+  | 0x04 -> chip.hstat
+  | 0x08 -> chip.value
+  | 0x09 -> chip.dir
+  | 0x0A -> pins chip land m16
+  | 0x0B -> pins chip lsr 16
+  | 0x10 | 0x11 | 0x12 | 0x13 -> owners (addr - 0x10)
+  | 0x14 -> chip.od
+  | 0x15 -> chip.safe_val
+  | 0x16 -> chip.safe_dir
+  | 0x18 -> filt 0
+  | 0x19 -> filt 16
+  | 0x20 -> fail_info
+  | 0x21 -> fail_cycle land m16
+  | 0x22 -> fail_cycle lsr 16
+  | 0x24 -> blame_info
+  | 0x25 -> blame_cycle land m16
+  | 0x26 -> blame_cycle lsr 16
+  | _ ->
+    (match thread_reg addr, rule_reg chip addr with
+     | Some (t, j), _ ->
+       let th = chip.th.(t) in
+       (match j with
+        | 1 ->
+          let st, code, a =
+            match th.state with
+            | Idle -> 0, 0, 0
+            | Run -> 1, 0, 0
+            | Wait_ev -> 2, 0, 0
+            | Halted -> 3, 0, 0
+            | Faulted f ->
+              let code, a =
+                match f with
+                | Illegal -> 1, 0
+                | Pcbound -> 2, 0
+                | Dbound -> 3, 0
+                | Pinown -> 4, 0
+                | Late -> 5, 0
+                | Ioperm -> 6, 0
+                | Trap c -> 7, c
+                | Rule k -> 8, k
+              in
+              4, code, a
+          in
+          st lor (code lsl 4) lor (a lsl 8)
+        | 2 -> th.entry
+        | 3 -> th.pbase
+        | 4 -> th.psize
+        | 5 -> th.dbase
+        | 6 -> th.dsize
+        | 7 -> if th.strict then 1 else 0
+        | 9 -> (match Queue.peek_opt th.outbox with Some v -> v | None -> 0)
+        | 10 ->
+          (if Queue.length th.inbox < chip.fifo_depth then 1 else 0) lor if Queue.is_empty th.outbox then 0 else 2
+        | 11 -> th.slack_min land m16
+        | 12 -> th.digest
+        | 14 ->
+          (if th.loaded then 1 else 0)
+          lor (if th.loading then 2 else 0)
+          lor (if th.late then 4 else 0)
+          lor if th.evf then 8 else 0
+        | 15 -> th.pc
+        | _ -> 0)
+     | None, Some (k, j) ->
+       let r = chip.rules.(k) in
+       (match j with
+        | 0 -> r.sel_start
+        | 1 -> r.sel_stop
+        | 2 -> r.sel_abort
+        | 3 -> r.rmin
+        | 4 -> r.rmax
+        | 5 ->
+          (if r.en then 1 else 0)
+          lor (if r.guarantee then 2 else 0)
+          lor (r.policy lsl 2)
+          lor (r.owner lsl 4)
+          lor (r.ps lsl 6)
+        | 6 ->
+          (if r.active then 1 else 0)
+          lor (if r.v_min then 2 else 0)
+          lor (if r.v_max then 4 else 0)
+          lor if r.repaired then 8 else 0
+        | 7 -> r.obs_min
+        | 8 -> r.obs_max
+        | 9 -> r.cnt
+        | _ -> 0)
+     | None, None -> 0)
+;;
+
+(* The host has read a whole register word: the one read with an effect is the mailbox. *)
+let reg_read_done chip addr =
+  match thread_reg addr with
+  | Some (t, 9) ->
+    let th = chip.th.(t) in
+    if Queue.is_empty th.outbox then hflag chip 4 else ignore (Queue.pop th.outbox)
+  | _ -> ()
+;;
+
+let reg_write chip addr v =
+  let v = v land m16 in
+  match addr with
+  | 0x04 -> chip.hstat <- chip.hstat land lnot v
+  | 0x10 | 0x11 | 0x12 | 0x13 ->
+    for j = 0 to 3 do
+      let pin = (4 * (addr - 0x10)) + j in
+      if pin <> 8 then chip.owner.(pin) <- (v lsr (4 * j)) land 7
+    done
+  | 0x14 -> chip.od <- v land 0xFF
+  | 0x15 -> chip.safe_val <- v
+  | 0x16 -> chip.safe_dir <- v land 0xFF
+  | 0x18 -> for j = 0 to 7 do chip.filt.(j) <- (v lsr (2 * j)) land 3 done
+  | 0x19 -> for j = 0 to 7 do chip.filt.(16 + j) <- (v lsr (2 * j)) land 3 done
+  | 0x27 ->
+    if v land 1 = 1
+    then begin
+      chip.first_fail <- None;
+      chip.first_blame <- None;
+      chip.blame_before_fail <- false
+    end
+  | _ ->
+    (match thread_reg addr, rule_reg chip addr with
+     | Some (t, j), _ ->
+       let th = chip.th.(t) in
+       let stopped_only f = if running th then hflag chip 2 else f () in
+       (match j with
+        | 0 ->
+          (match v with
+           | 1 -> do_start chip th
+           | 2 -> if th.state <> Idle then enter_stop chip th
+           | 3 ->
+             if (not (running th)) && th.psize >= 1 && th.pbase + th.psize <= 512
+             then begin
+               th.loading <- true; th.loaded <- false; th.crc <- 0xFFFF; th.load_count <- 0
+             end
+             else hflag chip 2
+           | _ -> hflag chip 2)
+        | 2 -> stopped_only (fun () -> th.entry <- v land 0x3FF)
+        | 3 ->
+          stopped_only (fun () ->
+            th.pbase <- v land 511; th.loaded <- false; th.loading <- false)
+        | 4 ->
+          stopped_only (fun () ->
+            if v > 512 then hflag chip 2 else (th.psize <- v; th.loaded <- false; th.loading <- false))
+        | 5 -> stopped_only (fun () -> th.dbase <- v land 1023)
+        | 6 -> stopped_only (fun () -> if v > 1024 then hflag chip 2 else th.dsize <- v)
+        | 7 -> th.strict <- v land 1 = 1
+        | 8 -> if Queue.length th.inbox < chip.fifo_depth then Queue.push v th.inbox else hflag chip 3
+        | 13 ->
+          if th.loading && th.load_count = th.psize && th.crc = v
+          then begin
+            th.loaded <- true;
+            th.digest <- th.crc
+          end
+          else hflag chip 1;
+          th.loading <- false
+        | _ -> ())
+     | None, Some (k, j) ->
+       let r = chip.rules.(k) in
+       (match j with
+        | 0 -> r.sel_start <- v
+        | 1 -> r.sel_stop <- v
+        | 2 -> r.sel_abort <- v
+        | 3 -> r.rmin <- v
+        | 4 -> r.rmax <- v
+        | 5 ->
+          r.en <- v land 1 = 1; r.guarantee <- v land 2 = 2; r.policy <- (v lsr 2) land 3
+          ; r.owner <- (v lsr 4) land 3; r.ps <- (v lsr 6) land 3
+          ; r.active <- false; r.cnt <- 0; r.v_min <- false; r.v_max <- false; r.repaired <- false
+          ; r.obs_min <- 0xFFFF; r.obs_max <- 0
+        | _ -> ())
+     | None, None -> ())
+;;
+
+type region =
+  | R_reg
+  | R_prog
+  | R_data
+
+(* SPI command byte: region, write?, address increments? *)
+let cmd_info = function
+  | 0x10 -> Some (R_reg, false, false)
+  | 0x11 -> Some (R_reg, false, true)
+  | 0x20 -> Some (R_reg, true, false)
+  | 0x21 -> Some (R_reg, true, true)
+  | 0x30 -> Some (R_prog, false, true)
+  | 0x40 -> Some (R_prog, true, true)
+  | 0x50 -> Some (R_data, false, true)
+  | 0x60 -> Some (R_data, true, true)
+  | _ -> None
+;;
+
+(* The host port in cycle n. SCK, MOSI and CS_N are the synchronised pins P16, P17, P18. *)
+let host_cycle chip ~n ~pv ~pv_prev =
+  let b k = (pv lsr k) land 1 and bp k = (pv_prev lsr k) land 1 in
+  let h = chip.host in
+  (* a waiting memory access is done in the system slot of its memory *)
+  (match h.req with
+   | Some (prog, write, a, d) when (prog && n land 3 = 3) || ((not prog) && n land 3 = 1) ->
+     if prog
+     then if write then ignore (prog_write chip a d) else h.rbuf <- chip.prog.(a land 511)
+     else if write
+     then chip.data.(a land 1023) <- d land m16
+     else h.rbuf <- chip.data.(a land 1023);
+     h.req <- None
+   | _ -> ());
+  if b 18 = 1
+  then begin
+    h.count <- 0; h.cmd <- 0; h.miso <- 0; h.osh <- 0
+  end
+  else begin
+    if bp 16 = 0 && b 16 = 1
+    then begin
+      h.sh <- ((h.sh lsl 1) lor b 17) land m32;
+      h.count <- h.count + 1;
+      let c = h.count in
+      if c = 8
+      then begin
+        h.cmd <- h.sh land 0xFF;
+        if cmd_info h.cmd = None then hflag chip 0
+      end
+      else (
+        match cmd_info h.cmd with
+        | None -> ()
+        | Some (R_reg, write, inc) ->
+          if c = 16
+          then begin
+            h.haddr <- h.sh land 0xFF;
+            if not write then h.osh <- reg_peek chip h.haddr lsl 16
+          end
+          else if c > 16 && (c - 16) land 15 = 0
+          then begin
+            if write then reg_write chip h.haddr (h.sh land m16) else reg_read_done chip h.haddr;
+            if inc then h.haddr <- (h.haddr + 1) land 0xFF;
+            if not write then h.osh <- reg_peek chip h.haddr lsl 16
+          end
+        | Some (region, write, _) ->
+          let prog = region = R_prog in
+          let w = if prog then 32 else 16 in
+          let first = if write then 24 else 32 in
+          if c = 24
+          then begin
+            h.haddr <- h.sh land m16;
+            if not write then h.req <- Some (prog, false, h.haddr, 0)
+          end
+          else if c >= first && (c - first) mod w = 0
+          then
+            if write
+            then begin
+              h.req <- Some (prog, true, h.haddr, if prog then h.sh else h.sh land m16);
+              h.haddr <- (h.haddr + 1) land m16
+            end
+            else begin
+              h.osh <- (if prog then h.rbuf else h.rbuf lsl 16);
+              h.haddr <- (h.haddr + 1) land m16;
+              h.req <- Some (prog, false, h.haddr, 0)
+            end)
+    end;
+    if bp 16 = 1 && b 16 = 0
+    then begin
+      h.miso <- (h.osh lsr 31) land 1;
+      h.osh <- (h.osh lsl 1) land m32
+    end
+  end
+;;
+
+(* --- the same host operations without the SPI timing, for tests --- *)
+
+let treg tid j = 0x40 + (16 * tid) + j
+
+let set_window chip tid ~pbase ~psize ~dbase ~dsize =
+  reg_write chip (treg tid 3) pbase;
+  reg_write chip (treg tid 4) psize;
+  reg_write chip (treg tid 5) dbase;
+  reg_write chip (treg tid 6) dsize
+;;
+
+let set_owner chip pin tid =
+  if pin = 8 || pin < 0 || pin > 15 then invalid_arg "set_owner";
+  let a = 0x10 + (pin / 4) and sh = 4 * (pin land 3) in
+  reg_write chip a (reg_peek chip a land lnot (15 lsl sh) lor (tid lsl sh))
+;;
+
+(* Load a program into the thread's window; true if the chip accepted it. *)
+let load_thread chip tid words =
+  let th = chip.th.(tid) in
+  reg_write chip (treg tid 0) 3;
+  Array.iteri (fun k w -> ignore (prog_write chip (th.pbase + k) w)) words;
+  reg_write chip (treg tid 13) (digest_of words);
+  th.loaded
+;;
+
+let start chip tid ~pc =
+  reg_write chip (treg tid 2) pc;
+  reg_write chip (treg tid 0) 1
+;;
+
+let set_rule chip k ?(guarantee = true) ?(policy = 0) ?(owner = 3) ?(ps = 0) ?(abort = 0x380) ?(min = 0)
+  ?(max = 0xFFFF) ~start ~stop () =
+  let a = 0x80 + (16 * k) in
+  List.iteri (fun j v -> reg_write chip (a + j) v) [ start; stop; abort; min; max ];
+  reg_write chip (a + 5) (1 lor (if guarantee then 2 else 0) lor (policy lsl 2) lor (owner lsl 4) lor (ps lsl 6))
+;;
+
+let host_push chip tid v =
+  if reg_peek chip (treg tid 10) land 1 = 1
+  then begin
+    reg_write chip (treg tid 8) v;
+    true
+  end
+  else false
+;;
+
+let host_pop chip tid =
+  if reg_peek chip (treg tid 10) land 2 = 2
+  then begin
+    let v = reg_peek chip (treg tid 9) in
+    reg_read_done chip (treg tid 9);
+    Some v
+  end
+  else None
+;;
+
 (* One clock cycle. [pad] holds the levels of P0..P7 and P16..P23 sampled by the first
    synchroniser stage at the clock edge that begins this cycle. *)
 let step chip ~pad =
@@ -787,12 +1190,13 @@ let step chip ~pad =
       | _ -> ())
     chip.th;
   rules_update chip ~n ~pv ~pv_prev;
+  host_cycle chip ~n ~pv ~pv_prev;
   for k = 7 downto 1 do chip.oe_hist.(k) <- chip.oe_hist.(k - 1) done;
   (* pins without a thread as owner hold the safe pattern *)
   let unowned = ref 0 in
   Array.iteri (fun q o -> if o < 0 || o > 2 then unowned := !unowned lor (1 lsl q)) chip.owner;
   let u = !unowned land lnot 0x100 in
-  chip.value <- chip.value_n land lnot u lor (chip.safe_val land u);
+  chip.value <- chip.value_n land lnot u lor (chip.safe_val land u) land lnot 0x100 lor (chip.host.miso lsl 8);
   let u8 = u land 0xFF in
   chip.dir <- chip.dir_n land lnot u8 lor (chip.safe_dir land u8);
   chip.pv_prev <- pv;

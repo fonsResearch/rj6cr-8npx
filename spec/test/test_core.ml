@@ -33,8 +33,8 @@ let run ?(pad = fun _ -> 0) chip ~cycles ~watch =
 let setup ?(tid = 0) ?(pins = [ 9 ]) ?(base = 0) src =
   let chip = Model.create () in
   let words = Asm.assemble src in
-  Model.load chip ~base words;
   Model.set_window chip tid ~pbase:base ~psize:(Array.length words) ~dbase:(tid * 256) ~dsize:256;
+  assert (Model.load_thread chip tid words);
   List.iter (fun p -> Model.set_owner chip p tid) pins;
   Model.start chip tid ~pc:0;
   chip
@@ -270,8 +270,8 @@ again:  OUTS 0, %d, r3 @adv
            |}
            pin)
     in
-    Model.load busy ~base words;
     Model.set_window busy tid ~pbase:base ~psize:(Array.length words) ~dbase:(tid * 256) ~dsize:256;
+    assert (Model.load_thread busy tid words);
     Model.set_owner busy pin tid;
     Model.start busy tid ~pc:0
   in

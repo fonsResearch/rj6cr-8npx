@@ -1,9 +1,9 @@
 # Machine model: threads, time and pins
 
-Draft 0.2 of 2026-11-14. Normative once frozen; until then `spec/model.ml` and this text are changed
+Draft 0.3 of 2026-11-14. Normative once frozen; until then `spec/model.ml` and this text are changed
 together. Scope: the three program threads, their timing hardware, the pad stage, memory windows, faults.
-The rule engine is in `rules.md`. Not yet specified, and named here only where they touch the core: host
-port and loader, line unit, response rules, trace. Instruction encodings are in `isa.md`, generated from `spec/isa.ml`.
+The rule engine is in `rules.md`, the host port and loader in `host.md`. Not yet specified: line unit,
+response rules, trace. Instruction encodings are in `isa.md`, generated from `spec/isa.ml`.
 
 Every statement below is implemented in `spec/model.ml`; the tests named in section 12 show the timing
 statements on running programs.
@@ -194,7 +194,6 @@ The table in `isa.md` gives one line per instruction; where it is not exhaustive
 ## 11. Hooks for blocks not yet specified
 
 - EMIT produces (thread, code) in its execute cycle for the rule engine, and for the trace.
-- Host: loading, start and stop of a thread, windows, pin configuration, mailbox access.
 
 ## 12. Tests
 
@@ -237,7 +236,8 @@ circuit form of this model in a later step.
 
 Shared: `now` 32; pad registers 24; pin configuration (owner, open drain, safe pattern, filter length)
 108; synchronisers, filter counters and previous values 88. Core state: 3 x 408 + 252 = 1,476 bits, not
-counting pipeline registers. Rule engine: 122 bits per rule and 131 shared (`rules.md`, section 9).
+counting pipeline registers. Rule engine: 122 bits per rule and 131 shared (`rules.md`, section 9). Host
+port and loader: about 313 bits (`host.md`, section 5).
 
 ## 14. Decisions taken in this draft
 
@@ -259,10 +259,9 @@ To be confirmed or changed when the documents are frozen.
 
 ## 15. Open points
 
-1. Start and stop of a thread by the host, and what start resets.
-2. Whether the "timing events first" order, which puts the fire decision in front of the execute stage,
+1. Whether the "timing events first" order, which puts the fire decision in front of the execute stage,
    meets 48 MHz with the rule engine's blocking decision in that path (`rules.md`, open point 2).
-3. Status bits 7 to 15 and the rest of the I/O register map.
-4. Firmware rates quoted in the architecture document were estimates. On the model, a serial bit takes
+2. Status bits 7 to 15 and the rest of the I/O register map.
+3. Firmware rates quoted in the architecture document were estimates. On the model, a serial bit takes
    two instructions, 8 cycles (6 Mbit/s at 48 MHz), and an SPI controller bit three instructions, 12
    cycles (4 MHz); the SPI test exchanges a byte each way at that rate and faults at 10 cycles.
