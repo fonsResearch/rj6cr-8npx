@@ -23,34 +23,34 @@ project:
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
 pinout:
   # Inputs
-  ui[0]: ""
-  ui[1]: ""
-  ui[2]: ""
-  ui[3]: ""
-  ui[4]: ""
-  ui[5]: ""
-  ui[6]: ""
-  ui[7]: ""
+  ui[0]: "HSCK: host SPI clock"
+  ui[1]: "HMOSI: host SPI data in"
+  ui[2]: "HCS_N: host SPI select"
+  ui[3]: "P19: input"
+  ui[4]: "P20: input"
+  ui[5]: "P21: input"
+  ui[6]: "P22: input"
+  ui[7]: "P23: input"
 
   # Outputs
-  uo[0]: ""
-  uo[1]: ""
-  uo[2]: ""
-  uo[3]: ""
-  uo[4]: ""
-  uo[5]: ""
-  uo[6]: ""
-  uo[7]: ""
+  uo[0]: "HMISO: host SPI data out"
+  uo[1]: "P9: output"
+  uo[2]: "P10: output"
+  uo[3]: "P11: output"
+  uo[4]: "P12: output"
+  uo[5]: "P13: output"
+  uo[6]: "P14: output"
+  uo[7]: "P15: output"
 
   # Bidirectional pins
-  uio[0]: ""
-  uio[1]: ""
-  uio[2]: ""
-  uio[3]: ""
-  uio[4]: ""
-  uio[5]: ""
-  uio[6]: ""
-  uio[7]: ""
+  uio[0]: "P0: bidirectional"
+  uio[1]: "P1: bidirectional"
+  uio[2]: "P2: bidirectional"
+  uio[3]: "P3: bidirectional"
+  uio[4]: "P4: bidirectional"
+  uio[5]: "P5: bidirectional"
+  uio[6]: "P6: bidirectional"
+  uio[7]: "P7: bidirectional"
 
 # Do not change!
 yaml_version: 6

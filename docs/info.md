@@ -1,20 +1,18 @@
-<!---
-
-This file is used to generate your project datasheet. Please fill in the information below and delete any unused
-sections.
-
-You can also include images in this folder and reference them in the markdown. Each image must be less than
-512 kb in size, and the combined size of all images must be less than 1 MB.
--->
-
 ## How it works
 
-Explain how your project works
+A reprogrammable protocol emulator. Three program threads share one four-stage pipeline, each executing
+one instruction every four clock cycles. A thread stages pin writes and commits them on a deadline held in
+a per-thread timer with a fractional period, so edges land on exact clock cycles. Programs are loaded by a
+host over SPI into an on-chip SRAM. The architecture is described in `doc/decisions/arch_selection.md` and
+the machine model in `doc/spec/machine.md`.
+
+The pin assignment below is provisional.
 
 ## How to test
 
-Explain how to use your project
+No test procedure exists yet: the RTL is not written. The executable specification is exercised with
+`dune test`.
 
 ## External hardware
 
-List external hardware used in your project (e.g. PMOD, LED display, etc), if any
+A host with an SPI controller, for example the microcontroller on the Tiny Tapeout demo board.

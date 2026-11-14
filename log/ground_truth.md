@@ -76,6 +76,11 @@ Nothing has been routed at 48 MHz or on 8x4 with this design.
   runs, GitHub API run timing).
 - This repository is private and its organisation is on the free plan: 2,000 included runner minutes per
   month (GitHub plan documentation). The hardening workflow here is therefore manual-trigger only.
+- First push, 2026-11-13: the test workflow's cocotb test passed, but its artifact upload failed with
+  "Artifact storage quota has been hit". The quota is per account, so a hardening run in this repository
+  would fail to upload its results as well until storage is freed or the repository is public. The docs
+  workflow failed on the unfilled pinout and `docs/info.md`; both now carry provisional content (not
+  re-run yet).
 
 ## 8. Local tools
 
@@ -94,5 +99,5 @@ pins cocotb 2.0.1 and pytest 8.4.2.
 | O4 | core area from a real 8x4 floorplan report (1,208,173 um^2 is used in the budget; not re-derived here) | open |
 | O5 | pad and clock frequency limits on this shuttle (the published 33 / 66 MHz figures are for another process) | open |
 | O6 | flow settings at 20.83 ns: setup margins, post-route repair, fanout and wire-length limits, macro halos | open |
-| O7 | where hardening runs execute, given section 7 | open, decision needed |
+| O7 | where hardening runs execute, given section 7 | decided 2026-11-13: the repository will be made public later; no hardening run before that |
 | O8 | whether the shuttle submission requires a public repository | open, to be checked in the official submission guide |
