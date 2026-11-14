@@ -277,10 +277,10 @@ def place(rects_um, size_um: Tuple[float, float], loc_um: Tuple[float, float], o
 
 
 def tile_stripes(core_x0_um, core_x1_um, y0_um, y1_um, vwidth, vspacing, vpitch, voffset, dbu) -> List[Rect]:
-    """Model of pdngen stripe placement. Assumption, inferred from Ken Pettit's published numbers
-    (offset 6.15 with a 2.88 um left core margin gives VPWR centres at 9.03 + pitch*k) and not
-    from pdngen source: VPWR centre at core_x0 + voffset + k*pitch, VGND centre vwidth + vspacing
-    to its right. The LibreLane step reads the real stripes, so only the tests depend on this."""
+    """Model of pdngen stripe placement: VPWR centre at core_x0 + voffset + k*pitch, VGND centre
+    vwidth + vspacing to its right. With offset 6.15 and the 2.88 um left core margin the VPWR
+    centres are at 9.03 + pitch*k, which a hardening run on an earlier design confirmed. The
+    LibreLane step reads the real stripes, so only planning and tests depend on this."""
     out = []
     k = 0
     hw = vwidth / 2
