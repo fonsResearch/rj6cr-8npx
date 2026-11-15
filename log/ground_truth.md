@@ -100,11 +100,38 @@ pins cocotb 2.0.1 and pytest 8.4.2.
 
 | # | item | state |
 |---|---|---|
-| O1 | 512x32 and 1024x16 macros through this flow and the precheck (only 256x16 has been) | open |
+| O1 | 512x32 and 1024x16 macros through this flow and the precheck (only 256x16 has been) | closed 2026-11-14 by run 43581583299 on branch `probe-macros` (section 10; full record in `log/macro_probe.md` on that branch) |
 | O2 | how to verify falling-edge registers, given the Cyclesim result above. Options: no falling-edge registers at all; a two-phase model in Cyclesim at twice the clock with a proof against the emitted Verilog; Verilog-level simulation and formal only for that block | open, decision needed before the both-edge front end is designed |
 | O3 | latch storage from an instantiated cell: simulation model, emitted Verilog, equivalence method | open |
 | O4 | core area from a real 8x4 floorplan report | closed 2026-11-14: 1,208,172.672 um^2 (section 7) |
-| O5 | pad and clock frequency limits on this shuttle (the published 33 / 66 MHz figures are for another process) | open |
-| O6 | flow settings at 20.83 ns: setup margins, post-route repair, fanout and wire-length limits, macro halos | open |
+| O5 | pad and clock frequency limits on this shuttle (the published 33 / 66 MHz figures are for another process) | open. Checked 2026-11-15: the Tiny Tapeout clock and GPIO specification pages give the 33 MHz output and 66 MHz input figures for the SKY130 pads only; no figure for this process found there. Next: the I/O cell liberty in the PDK and a question to the organisers |
+| O6 | flow settings at 20.83 ns: setup margins, post-route repair, fanout and wire-length limits, macro halos | open; moves to the skeleton step, which is the first realistic load. Carried in from the macro probe: maximum-capacitance violations on macro data outputs, hold cells in front of macro inputs |
 | O7 | where hardening runs execute | closed 2026-11-14: this repository, public, standard runners |
-| O8 | whether the shuttle submission requires a public repository | open, to be checked in the official submission guide |
+| O8 | whether the shuttle submission requires a public repository | closed 2026-11-15: the competition's rules ask for an open-source submission and a link to a public repository with a passing GDS and precheck. The same page allows running the flow locally and submitting through Tiny Tapeout's custom GDS action if a run would exceed the 6-hour limit of the hosted runners; the precheck must still pass |
+
+## 10. SRAM macros through the flow (O1)
+
+Run 43581583299, branch `probe-macros`, commit c4ab62f, 2026-11-14: a probe with one 512x32 and one
+1024x16 macro, a shift-register harness and a cocotb test that writes and reads one word per macro.
+Read from that run's logs and reports:
+
+| check | result |
+|---|---|
+| jobs | gds, precheck, gate-level test, viewer all pass; gds job 77.5 min, of which Magic DRC 49.9 min |
+| power stripes onto the macros | 24 stripes extended (16 program, 8 data), 0 violations of the column, polarity and full-height pin checks; all VPWR and VGND shapes connected after routing |
+| LVS, antenna, detailed routing | match, 0 violating nets, 0 violations |
+| precheck KLayout deck (333 rules) | 0 violations with the macros in the layout |
+| Magic DRC | 230,585 violation boxes, every one completely inside a macro outline, none outside |
+| Magic illegal overlaps | 25, all where the extended stripes cross the macro's obstruction between its two supply pin rectangles, which the macro GDS shows to be free of metal |
+| timing, slow corner, 20.83 ns | clock to data out 6.79 ns (512x32) and 7.55 ns (1024x16); worst setup slack 12.27 ns; no setup or hold violations in any corner |
+| maximum capacitance | 4 violations, all on data outputs of the 1024x16 macro (0.071 to 0.099 pF against 0.064 pF); open |
+| gate-level test | write and read of one word per macro passes with the PDK's functional models |
+
+Consequences:
+
+- The total Magic DRC count cannot gate the flow once a macro is placed. Magic DRC stays on; a step
+  after it (`Tile.MagicDRCOutsideMacros`, on the probe branch) stops the flow on any violation that is
+  not completely inside a macro. Its first run in the flow is 43661669934.
+- A hardening run costs about 80 minutes while Magic DRC is on.
+- The macro data outputs need a buffer or the capture register at the pin.
+
