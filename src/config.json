@@ -36,7 +36,10 @@
   "//": "librelane_plugin_tile_pdn.py and flow/pdn.",
   "meta": {
     "flow": "Classic",
-    "substituting_steps": { "+OpenROAD.GeneratePDN": "Tile.MacroColumnStripes" }
+    "substituting_steps": {
+      "+OpenROAD.GeneratePDN": "Tile.MacroColumnStripes",
+      "+Magic.DRC": "Tile.MagicDRCOutsideMacros"
+    }
   },
   "MACROS": {
     "RM_IHPSG13_1P_512x32_c2_bm_bist": {
