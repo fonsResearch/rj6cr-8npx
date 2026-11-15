@@ -119,7 +119,10 @@ pins are at the top left.
 Since the total can no longer gate the flow, the step `Tile.MagicDRCOutsideMacros`
 (`librelane_plugin_tile_drc.py`, `flow/drc/magic_outside_macros.py`) now runs after Magic DRC and
 stops the flow if any violation is not completely inside a macro outline. On this run's report it
-counts 230,585 inside and 0 outside; with one violation added in open area it fails. Its self-test
+counts 230,585 inside and 0 outside; with one violation added in open area it fails. Its first run
+inside the flow (run 43661669934, commit 3be5674, all four jobs passed) printed the same counts and
+reported them as the metrics `magic__drc_error_inside_macros__count` 230585 and
+`magic__drc_error_outside_macros__count` 0; every other number of this section was identical in that run. Its self-test
 (`flow/drc/test_magic_outside_macros.py`) covers a box crossing a macro edge and a rotated macro.
 What Magic no longer checks is the inside of the macros, including the stripes drawn over them;
 those are covered by the KLayout deck, LVS, and the two stripe checks.
@@ -142,10 +145,13 @@ violations in any corner. Slow corner, 1.08 V, 125 C:
 - The flow inserted 253 hold buffers for 163 endpoints. The worst path into the program macro passes
   three delay cells and arrives at 4.7 ns through four small gates. The real design should budget for
   hold cells in front of the macro inputs and not count on a short path into a macro.
-- **Open: 4 maximum-capacitance violations in every corner, all on data-macro outputs**
-  (`A_DOUT[8]` 0.099 pF, `A_DOUT[0]` 0.073, `A_DOUT[1]` 0.072, `A_DOUT[2]` 0.071 against the 0.064 pF
-  limit). Post-route repair saw 3 of them and did not clear them. The checker only warns. To fix in
-  the skeleton: a buffer or the capture register placed at each data-out pin. No slew violations.
+- **Open: 4 maximum-capacitance violations in the sign-off timing report of every corner, all on
+  data-macro outputs** (`A_DOUT[8]` 0.099 pF, `A_DOUT[0]` 0.073, `A_DOUT[1]` 0.072, `A_DOUT[2]` 0.071
+  against the 0.064 pF limit; slow corner, extracted parasitics). The checker only warns. The repair
+  step after global routing, which works on estimated wire loads with a 30 % margin, counted 3
+  capacitance violations and lists 3 nets as repaired, with 0 cells resized and 0 buffers inserted; its
+  log does not name the nets, so whether they are among these 4 is not known. To fix in the skeleton:
+  a buffer or the capture register placed at each data-out pin. No slew violations.
 
 ### 5.4 Function
 
