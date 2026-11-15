@@ -9,3 +9,15 @@
  (alias runtest)
  (action
   (diff isa.md isa.md.gen)))
+
+; fig/timing_contract.csv is the model's per-cycle record behind fig/timing_contract.png
+; (drawn by tools/plot_timing_contract.py). `dune test` fails if it is out of date.
+(rule
+ (with-stdout-to
+  timing_contract.csv.gen
+  (run %{exe:../../spec/contract_trace.exe})))
+
+(rule
+ (alias runtest)
+ (action
+  (diff fig/timing_contract.csv timing_contract.csv.gen)))

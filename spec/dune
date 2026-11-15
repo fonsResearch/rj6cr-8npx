@@ -9,3 +9,8 @@
  (name gen_isa_doc)
  (modules gen_isa_doc)
  (libraries spec))
+
+(executable
+ (name contract_trace)
+ (modules contract_trace)
+ (libraries spec))

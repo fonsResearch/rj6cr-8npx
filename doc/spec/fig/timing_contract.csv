@@ -1,0 +1,61 @@
+scenario,cycle,slot,stage,instruction,armed,due,t,pad,rule_active,rule_count,state
+free,0,0,F,"TNOW 8",0,0,0,0,0,0,run
+free,1,1,D,"TNOW 8",0,0,0,0,0,0,run
+free,2,2,M,"TNOW 8",0,0,0,0,0,0,run
+free,3,3,X,"TNOW 8",0,0,0,0,0,0,run
+free,4,0,F,"PINV 1, 9 @at",0,0,12,0,0,0,run
+free,5,1,D,"PINV 1, 9 @at",0,0,12,0,0,0,run
+free,6,2,M,"PINV 1, 9 @at",0,0,12,0,0,0,run
+free,7,3,X,"PINV 1, 9 @at",0,0,12,0,0,0,run
+free,8,0,F,"TADDI 6",1,0,12,0,0,0,run
+free,9,1,D,"TADDI 6",1,0,12,0,0,0,run
+free,10,2,M,"TADDI 6",1,0,12,0,0,0,run
+free,11,3,X,"TADDI 6",1,0,12,0,0,0,run
+free,12,0,F,"PINV 0, 9 @at",0,0,18,1,0,0,run
+free,13,1,D,"PINV 0, 9 @at",0,0,18,1,0,0,run
+free,14,2,M,"PINV 0, 9 @at",0,0,18,1,0,0,run
+free,15,3,X,"PINV 0, 9 @at",0,0,18,1,0,0,run
+free,16,0,F,"HALT",1,0,18,1,0,0,run
+free,17,1,D,"HALT",1,0,18,1,0,0,run
+free,18,2,M,"HALT",0,0,18,0,0,0,run
+free,19,3,X,"HALT",0,0,18,0,0,0,run
+free,20,0,-,"",0,0,18,0,0,0,halted
+free,21,1,-,"",0,0,18,0,0,0,halted
+free,22,2,-,"",0,0,18,0,0,0,halted
+free,23,3,-,"",0,0,18,0,0,0,halted
+free,24,0,-,"",0,0,18,0,0,0,halted
+free,25,1,-,"",0,0,18,0,0,0,halted
+free,26,2,-,"",0,0,18,0,0,0,halted
+free,27,3,-,"",0,0,18,0,0,0,halted
+free,28,0,-,"",0,0,18,0,0,0,halted
+free,29,1,-,"",0,0,18,0,0,0,halted
+hold,0,0,F,"TNOW 8",0,0,0,0,0,0,run
+hold,1,1,D,"TNOW 8",0,0,0,0,0,0,run
+hold,2,2,M,"TNOW 8",0,0,0,0,0,0,run
+hold,3,3,X,"TNOW 8",0,0,0,0,0,0,run
+hold,4,0,F,"PINV 1, 9 @at",0,0,12,0,0,0,run
+hold,5,1,D,"PINV 1, 9 @at",0,0,12,0,0,0,run
+hold,6,2,M,"PINV 1, 9 @at",0,0,12,0,0,0,run
+hold,7,3,X,"PINV 1, 9 @at",0,0,12,0,0,0,run
+hold,8,0,F,"TADDI 6",1,0,12,0,0,0,run
+hold,9,1,D,"TADDI 6",1,0,12,0,0,0,run
+hold,10,2,M,"TADDI 6",1,0,12,0,0,0,run
+hold,11,3,X,"TADDI 6",1,0,12,0,0,0,run
+hold,12,0,F,"PINV 0, 9 @at",0,0,18,1,1,1,run
+hold,13,1,D,"PINV 0, 9 @at",0,0,18,1,1,2,run
+hold,14,2,M,"PINV 0, 9 @at",0,0,18,1,1,3,run
+hold,15,3,X,"PINV 0, 9 @at",0,0,18,1,1,4,run
+hold,16,0,F,"HALT",1,0,18,1,1,5,run
+hold,17,1,D,"HALT",1,0,18,1,1,6,run
+hold,18,2,M,"HALT",1,1,18,1,1,7,run
+hold,19,3,W,"HALT",1,1,18,1,1,8,run
+hold,20,0,F,"HALT",1,1,18,1,1,9,run
+hold,21,1,D,"HALT",1,1,18,1,1,10,run
+hold,22,2,M,"HALT",1,1,18,1,1,11,run
+hold,23,3,X,"HALT",1,1,18,1,1,12,run
+hold,24,0,-,"",0,0,24,0,0,12,halted
+hold,25,1,-,"",0,0,24,0,0,12,halted
+hold,26,2,-,"",0,0,24,0,0,12,halted
+hold,27,3,-,"",0,0,24,0,0,12,halted
+hold,28,0,-,"",0,0,24,0,0,12,halted
+hold,29,1,-,"",0,0,24,0,0,12,halted

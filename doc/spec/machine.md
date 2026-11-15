@@ -111,6 +111,18 @@ Consequences, each shown by a test (section 12):
 2. An edge produced by `@at` or `@adv` is in cycle t exactly, whatever the instruction count before it;
    otherwise the thread has faulted or, under the lenient policy, the LATE bit is set.
 
+### Figure: one deadline commit, cycle by cycle
+
+![Timing contract](fig/timing_contract.png)
+
+Thread 0 runs `TNOW 8`, `PINV 1, 9 @at`, `TADDI 6`, `PINV 0, 9 @at`, `HALT`. Top: no rule. The first
+write is armed when its instruction has executed (cycle 8) and the pad shows it in cycle t = 12; the
+second in cycle t = 18. Bottom: rule 0 is a guarantee with policy hold, minimum 12 cycles from the commit
+that raises P9 to the commit that lowers it. The second commit is due for cycle 18, is kept back while
+the count is below 12, and reaches the pad in cycle 24; t becomes 24, and `HALT`, which waits for an
+armed commit, runs a round later. The values are the reference model's (`spec/contract_trace.ml`,
+`fig/timing_contract.csv`, checked by `dune test`); `tools/plot_timing_contract.py` draws them.
+
 ## 6. Event waits
 
 WAITP (a pin: low, high, rising, falling) and WAITS (a status bit equal to a value) put the thread to
