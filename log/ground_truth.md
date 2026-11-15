@@ -124,14 +124,15 @@ Read from that run's logs and reports:
 | Magic DRC | 230,585 violation boxes, every one completely inside a macro outline, none outside |
 | Magic illegal overlaps | 25, all where the extended stripes cross the macro's obstruction between its two supply pin rectangles, which the macro GDS shows to be free of metal |
 | timing, slow corner, 20.83 ns | clock to data out 6.79 ns (512x32) and 7.55 ns (1024x16); worst setup slack 12.27 ns; no setup or hold violations in any corner |
-| maximum capacitance | 4 violations, all on data outputs of the 1024x16 macro (0.071 to 0.099 pF against 0.064 pF); open |
+| maximum capacitance | 4 violations in the sign-off timing report of every corner, all on data outputs of the 1024x16 macro (0.071 to 0.099 pF against 0.064 pF); open. The repair step after global routing counted 3 on estimated wire loads and changed no cell; its log does not name the nets |
 | gate-level test | write and read of one word per macro passes with the PDK's functional models |
 
 Consequences:
 
 - The total Magic DRC count cannot gate the flow once a macro is placed. Magic DRC stays on; a step
   after it (`Tile.MagicDRCOutsideMacros`, on the probe branch) stops the flow on any violation that is
-  not completely inside a macro. Its first run in the flow is 43661669934.
+  not completely inside a macro. Its first run in the flow, 43661669934 (commit 3be5674, all four jobs
+  passed), counted 230,585 inside and 0 outside; the other results of the table were identical.
 - A hardening run costs about 80 minutes while Magic DRC is on.
 - The macro data outputs need a buffer or the capture register at the pin.
 
