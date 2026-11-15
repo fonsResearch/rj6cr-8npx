@@ -41,7 +41,8 @@ addresses increment per word; only the low 9 (program) or 10 (data) bits are use
   read takes its value in the cycle in which the last bit before the word is shifted in; a read with a
   side effect (the mailbox) takes effect only when the last bit of that word has been clocked.
 - Memory accesses are carried out in the system slot of the round (`machine.md`, section 2), at most 4
-  cycles after the word is complete or the address is known. Reads are fetched one word ahead.
+  cycles after the word is complete or the address is known, or one round later for each data-memory
+  slot the line unit takes. Reads are fetched one word ahead.
 - The data memory is not gated: the host can read and write any word at any time, including words inside
   a running thread's data window. That is the intended way to pass bulk data.
 
@@ -126,6 +127,8 @@ R/W; writing word 5 also resets the rule's state, flags and observations. Offset
 minimum, 8 observed maximum, 9 current length, all R. Load a rule by writing word 5 with enable 0, then
 words 0 to 4, then word 5.
 
+Line unit at 0xC0 + j: register j of `line.md`, section 3, including the owner register (j = 22).
+
 ## 5. State
 
 SPI side about 130 bits (two 32-bit shift registers, a 32-bit read-ahead word, address, command, bit
@@ -144,6 +147,7 @@ and the `now` latch 21 bits. About 313 bits, plus the mailboxes counted with the
 ## 7. Open points
 
 1. SCK limit with real pad delays.
-2. Arbitration of the data memory's system slot once the line unit and the trace exist: line unit, then
-   host, then trace.
+2. (closed) The data memory's system slot goes to the line unit, then the host, then the trace. The
+   SCK rule of section 2 was measured without line unit traffic; a host data-memory access that loses
+   a slot is one round late.
 3. Whether the digest should also cover the pin configuration and the rule table.

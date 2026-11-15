@@ -135,6 +135,72 @@ type host =
   ; mutable req : (bool * bool * int * int) option (* program memory?, write?, address, data *)
   }
 
+(* Line unit and response rules (doc/spec/line.md). *)
+type resp =
+  { mutable q_ctl : int
+  ; mutable q_match : int
+  ; mutable q_pos : int
+  ; mutable q_reply : int
+  ; mutable q_len : int
+  ; mutable q_fired : bool
+  }
+
+type line =
+  { mutable l_owner : int (* thread 0..2, 3: none *)
+  ; lc : int array (* configuration registers 1..17, indexed as in the I/O map *)
+  ; resp : resp array
+  ; mutable l_cmd : int (* command bits written during the previous cycle *)
+  ; l_snap : int array (* what a thread reads during this cycle: status, rcnt, hist, rcrc, tcnt *)
+  ; mutable l_ev : int (* class 6 events of this cycle *)
+  ; mutable l_mask : int (* pad override of this cycle: pins, values, directions *)
+  ; mutable l_val : int
+  ; mutable l_dir : int
+  ; mutable q_pend : int option (* response rule that fired in the previous cycle *)
+  (* transmitter *)
+  ; mutable t_st : int (* 0 idle, 1 load, 2 frame, 3 tail, 4 reply wait, 5 reply *)
+  ; mutable t_acc : int
+  ; mutable t_bnd : bool
+  ; mutable t_sent : int
+  ; mutable t_word : int
+  ; mutable t_next : int
+  ; mutable t_nvalid : bool
+  ; mutable t_req : int option (* index of the word to read *)
+  ; mutable t_crc : int
+  ; mutable t_crcleft : int
+  ; mutable t_run : int
+  ; mutable t_last : int
+  ; mutable t_line : int
+  ; mutable t_bit : int
+  ; mutable t_half : bool
+  ; mutable t_tail : int
+  ; mutable t_out : int (* levels of the transmit pin [0] and its partner [1] *)
+  ; mutable t_rel : bool
+  ; mutable t_rwait : int
+  ; mutable t_rleft : int
+  ; mutable t_rsh : int
+  ; mutable t_rtail : bool
+  ; mutable t_done : bool
+  ; mutable t_err : int (* [0] word missing or outside the window, [1] stopped by a rule, [2] reply lost *)
+  (* receiver *)
+  ; mutable r_st : int (* 0 off, 1 armed, 2 hunt, 3 data *)
+  ; mutable r_idle_seen : bool
+  ; mutable r_ph : int
+  ; mutable r_lv : int
+  ; mutable r_prev : int
+  ; mutable r_hcnt : int
+  ; mutable r_cnt : int
+  ; mutable r_sh : int
+  ; mutable r_hist : int
+  ; mutable r_crc : int
+  ; mutable r_run : int
+  ; mutable r_last : int
+  ; mutable r_quiet : int
+  ; mutable r_wbuf : (int * int) option (* word index, data *)
+  ; mutable r_done : bool
+  ; mutable r_crcok : bool
+  ; mutable r_err : int (* [0] stuffing violated, [1] a word was lost *)
+  }
+
 type chip =
   { mutable now : int
   ; prog : int array
@@ -180,6 +246,7 @@ type chip =
   ; tr_rec : int array (* the record being written *)
   ; mutable tr_widx : int (* next word of it; 4: none in progress *)
   ; mutable tr_lost : bool
+  ; line : line
   }
 
 let no_owner = 7
@@ -199,6 +266,17 @@ let new_rule () =
   ; repaired = false; obs_min = 0xFFFF; obs_max = 0 }
 ;;
 
+let new_line () =
+  { l_owner = 3; lc = Array.make 18 0
+  ; resp = Array.init 2 (fun _ -> { q_ctl = 0; q_match = 0; q_pos = 0; q_reply = 0; q_len = 0; q_fired = false })
+  ; l_cmd = 0; l_snap = Array.make 5 0; l_ev = 0; l_mask = 0; l_val = 0; l_dir = 0; q_pend = None
+  ; t_st = 0; t_acc = 0; t_bnd = false; t_sent = 0; t_word = 0; t_next = 0; t_nvalid = false; t_req = None
+  ; t_crc = 0; t_crcleft = 0; t_run = 0; t_last = 0; t_line = 0; t_bit = 0; t_half = false; t_tail = 0
+  ; t_out = 0; t_rel = false; t_rwait = 0; t_rleft = 0; t_rsh = 0; t_rtail = false; t_done = false; t_err = 0
+  ; r_st = 0; r_idle_seen = false; r_ph = 0; r_lv = 0; r_prev = 0; r_hcnt = 0; r_cnt = 0; r_sh = 0; r_hist = 0
+  ; r_crc = 0; r_run = 0; r_last = 0; r_quiet = 0; r_wbuf = None; r_done = false; r_crcok = false; r_err = 0 }
+;;
+
 let create ?(fifo_depth = 1) ?(n_rules = 4) () =
   { now = 0; prog = Array.make 512 0; data = Array.make 1024 0; th = Array.init 3 new_thread
   ; value = 0; dir = 0; value_n = 0; dir_n = 0; owner = Array.make 16 no_owner; od = 0
@@ -209,7 +287,7 @@ let create ?(fifo_depth = 1) ?(n_rules = 4) () =
   ; host = { count = 0; sh = 0; cmd = 0; haddr = 0; osh = 0; miso = 0; rbuf = 0; req = None }
   ; tr_en = false; tr_freeze = false; tr_base = 0; tr_size = 0; tr_mask = 0; tr_post = 4; tr_ptr = 0
   ; tr_wrapped = false; tr_frozen = false; tr_trig = false; tr_left = 0; tr_rec = Array.make 4 0
-  ; tr_widx = 4; tr_lost = false }
+  ; tr_widx = 4; tr_lost = false; line = new_line () }
 ;;
 
 (* --- pins --- *)
@@ -253,7 +331,18 @@ let status chip th =
   lor (if th.late then 8 else 0)
   lor (if chip.first_fail <> None then 16 else 0)
   lor (if chip.first_blame <> None then 32 else 0)
-  lor if Array.exists (fun r -> r.repaired) chip.rules then 64 else 0
+  lor (if Array.exists (fun r -> r.repaired) chip.rules then 64 else 0)
+  lor
+  if chip.line.l_owner = th.id
+  then (
+    (* line unit, as its owner sees it: 7 transmitter busy, 8 receiver in a frame, 9 frame
+       received, 10 frame sent, 11 any error flag, 12 / 13 response rule 0 / 1 fired *)
+    let st = chip.line.l_snap.(0) in
+    let b k = (st lsr k) land 1 in
+    (b 0 lsl 7) lor (b 2 lsl 8) lor (b 4 lsl 9) lor (b 3 lsl 10)
+    lor (if st land 0x7C0 <> 0 then 1 lsl 11 else 0)
+    lor (b 12 lsl 12) lor (b 13 lsl 13))
+  else 0
 ;;
 
 (* A fault stops the thread and turns the safe pattern of its pins into a pending commit,
@@ -272,7 +361,8 @@ let enter_fault chip th f =
    class 0 / 1: rising / falling edge of pin index (0..23) as read; qualifier 0 any, 1 the
                 peer's, 2 our own
    class 2 / 3: a commit raises / lowers the value of pin index (0..15)
-   class 5:     the rule's owner thread executes EMIT with code index (0..31) *)
+   class 5:     the rule's owner thread executes EMIT with code index (0..31)
+   class 6:     line unit symbol index (0..10), see line_cycle *)
 let decode_sel sel =
   let cls = (sel lsr 7) land 7 and q = (sel lsr 5) land 3 and idx = sel land 31 in
   if sel lsr 10 <> 0
@@ -282,6 +372,7 @@ let decode_sel sel =
     | 0 | 1 -> if idx <= 23 && q <= 2 then Some (cls, q, idx) else None
     | 2 | 3 -> if idx <= 15 && q = 0 then Some (cls, q, idx) else None
     | 5 -> if q = 0 then Some (cls, q, idx) else None
+    | 6 -> if q = 0 && idx <= 10 then Some (cls, q, idx) else None
     | _ -> None)
 ;;
 
@@ -312,8 +403,7 @@ let record chip ~n k ~max_kind =
    state of this cycle only. A guarantee rule with policy hold or fail-stop that is active
    below its minimum blocks a commit containing its stop edge. Fail-stop also faults the
    thread, whose safe pattern then waits in the same way. *)
-let may_fire chip th ~n =
-  let rise, fall = proposed chip th in
+let blocking_rules chip ~rise ~fall =
   let blocking = ref [] in
   Array.iteri
     (fun k r ->
@@ -324,7 +414,12 @@ let may_fire chip th ~n =
         | Some (3, _, pin) when (fall lsr pin) land 1 = 1 -> blocking := k :: !blocking
         | _ -> ()))
     chip.rules;
-  match List.rev !blocking with
+  List.rev !blocking
+;;
+
+let may_fire chip th ~n =
+  let rise, fall = proposed chip th in
+  match blocking_rules chip ~rise ~fall with
   | [] -> true
   | ks ->
     let faulted = match th.state with Faulted _ -> true | _ -> false in
@@ -345,6 +440,74 @@ let fire chip th ~pv ~staged =
     chip.ev_fall <- chip.ev_fall lor fall
   end;
   commit chip th ~pv ~staged
+;;
+
+(* --- line unit registers (doc/spec/line.md); the unit itself is line_cycle below --- *)
+
+let line_status (l : line) =
+  (if l.t_st <> 0 then 1 else 0)
+  lor (if l.r_st = 1 || l.r_st = 2 then 2 else 0)
+  lor (if l.r_st = 3 then 4 else 0)
+  lor (if l.t_done then 8 else 0)
+  lor (if l.r_done then 16 else 0)
+  lor (if l.r_crcok then 32 else 0)
+  lor ((l.r_err land 3) lsl 6)
+  lor ((l.t_err land 7) lsl 8)
+  lor (if l.resp.(0).q_fired then 1 lsl 12 else 0)
+  lor if l.resp.(1).q_fired then 1 lsl 13 else 0
+;;
+
+(* Registers of the unit by index: 0 command / status, 1..17 configuration, 18..21 read only,
+   22 owner (host only); response rule k at 32 + 8 k + (0..4). *)
+let line_peek ?(snap = false) (l : line) j =
+  if j = 0
+  then if snap then l.l_snap.(0) else line_status l
+  else if j >= 1 && j <= 17
+  then l.lc.(j)
+  else if j >= 18 && j <= 21
+  then
+    if snap
+    then l.l_snap.(j - 17)
+    else (match j with 18 -> l.r_cnt | 19 -> l.r_hist | 20 -> l.r_crc | _ -> l.t_sent)
+  else if j = 22
+  then l.l_owner
+  else if j >= 32 && j < 48 && j land 7 <= 4
+  then (
+    let q = l.resp.((j - 32) / 8) in
+    match j land 7 with
+    | 0 -> q.q_ctl lor if q.q_fired then 0x8000 else 0
+    | 1 -> q.q_match
+    | 2 -> q.q_pos
+    | 3 -> q.q_reply
+    | _ -> q.q_len)
+  else 0
+;;
+
+let line_poke (l : line) j v =
+  let v = v land m16 in
+  if j = 0
+  then l.l_cmd <- l.l_cmd lor (v land 31)
+  else if j >= 1 && j <= 17
+  then l.lc.(j) <- v
+  else if j = 22
+  then l.l_owner <- v land 3
+  else if j >= 32 && j < 48 && j land 7 <= 4
+  then (
+    let q = l.resp.((j - 32) / 8) in
+    match j land 7 with
+    | 0 ->
+      q.q_ctl <- v land 0x3FFF;
+      q.q_fired <- false
+    | 1 -> q.q_match <- v
+    | 2 -> q.q_pos <- v land 0x3FFF
+    | 3 -> q.q_reply <- v
+    | _ -> q.q_len <- v land 63)
+;;
+
+(* Which registers a thread may address: I/O address 0x40 + index, the owner register excluded. *)
+let line_io_index addr =
+  let j = addr - 0x40 in
+  if (j >= 0 && j <= 21) || (j >= 32 && j < 48 && j land 7 <= 4) then Some j else None
 ;;
 
 (* --- instruction semantics --- *)
@@ -577,10 +740,19 @@ let execute chip th ~n ~pv w =
            | _ -> r.cnt
          in
          regw := Some (a "rd", v))
-       else raise (Fault_exn Ioperm)
+       else (
+         match line_io_index addr with
+         | Some j when chip.line.l_owner = th.id -> regw := Some (a "rd", line_peek ~snap:true chip.line j)
+         | _ -> raise (Fault_exn Ioperm))
      | Iow | Iowi ->
-       if a "addr" <> 0 then raise (Fault_exn Ioperm);
-       clr := if i.def.op = Iow then r.(a "ra") else a "imm");
+       let addr = a "addr" in
+       let v = if i.def.op = Iow then r.(a "ra") else a "imm" in
+       if addr = 0
+       then clr := v
+       else (
+         match line_io_index addr with
+         | Some j when chip.line.l_owner = th.id -> later (fun () -> line_poke chip.line j v)
+         | _ -> raise (Fault_exn Ioperm)));
     (* timing: is the deadline still ahead? *)
     let uses_deadline = i.tm >= 2 || (match !new_wait with Some w -> w.w_to | None -> false) in
     let slack = sext32 (!t_int - e) in
@@ -696,6 +868,7 @@ let rules_update chip ~n ~pv ~pv_prev =
     | Some (2, _, pin) -> (chip.ev_rise lsr pin) land 1 = 1
     | Some (3, _, pin) -> (chip.ev_fall lsr pin) land 1 = 1
     | Some (5, _, code) -> r.owner <= 2 && List.mem (r.owner, code) chip.cyc_emits
+    | Some (6, _, k) -> (chip.line.l_ev lsr k) land 1 = 1
     | _ -> false
   in
   let unit_mask (r : rule) = (1 lsl (4 * r.ps)) - 1 in
@@ -865,6 +1038,7 @@ let reg_peek chip addr =
   | 0x34 -> chip.tr_mask lsr 16
   | 0x35 -> chip.tr_ptr lor (if chip.tr_wrapped then 0x8000 else 0) lor if chip.tr_frozen then 0x4000 else 0
   | 0x36 -> chip.tr_post
+  | _ when addr >= 0xC0 -> line_peek chip.line (addr - 0xC0)
   | _ ->
     (match thread_reg addr, rule_reg chip addr with
      | Some (t, j), _ ->
@@ -975,6 +1149,7 @@ let reg_write chip addr v =
   | 0x33 -> chip.tr_mask <- chip.tr_mask land 0xFF0000 lor v
   | 0x34 -> chip.tr_mask <- chip.tr_mask land m16 lor ((v land 0xFF) lsl 16)
   | 0x36 -> chip.tr_post <- v land 0xFF
+  | _ when addr >= 0xC0 -> line_poke chip.line (addr - 0xC0) v
   | _ ->
     (match thread_reg addr, rule_reg chip addr with
      | Some (t, j), _ ->
@@ -1048,12 +1223,12 @@ let cmd_info = function
 ;;
 
 (* The host port in cycle n. SCK, MOSI and CS_N are the synchronised pins P16, P17, P18. *)
-let host_cycle chip ~n ~pv ~pv_prev =
+let host_cycle chip ~n ~pv ~pv_prev ~slot_free =
   let b k = (pv lsr k) land 1 and bp k = (pv_prev lsr k) land 1 in
   let h = chip.host in
   (* a waiting memory access is done in the system slot of its memory *)
   (match h.req with
-   | Some (prog, write, a, d) when (prog && n land 3 = 3) || ((not prog) && n land 3 = 1) ->
+   | Some (prog, write, a, d) when (prog && n land 3 = 3) || ((not prog) && n land 3 = 1 && slot_free) ->
      if prog
      then if write then ignore (prog_write chip a d) else h.rbuf <- chip.prog.(a land 511)
      else if write
@@ -1119,6 +1294,418 @@ let host_cycle chip ~n ~pv ~pv_prev =
       h.osh <- (h.osh lsl 1) land m32
     end
   end
+;;
+
+(* --- line unit and response rules (doc/spec/line.md) --- *)
+
+(* The line unit in cycle n. It runs before the threads, on the register values of this
+   cycle; what a thread writes in cycle n is seen here in cycle n + 1. Returns whether the
+   unit uses the system slot of the data memory in this cycle. *)
+let line_cycle chip ~n ~pv ~pv_prev =
+  let l = chip.line in
+  let ctl = l.lc.(1) in
+  let c b = (ctl lsr b) land 1 = 1 in
+  let per = max 16 l.lc.(2) in
+  let bitp v q = if q <= 23 then (v lsr q) land 1 else 0 in
+  let inv = (ctl lsr 4) land 1 and idle = (ctl lsr 5) land 1 in
+  let code = (ctl lsr 2) land 3 in
+  let ext = c 13 in
+  let ones = c 11 in
+  let stuff_n = match (ctl lsr 8) land 7 with 0 -> 8 | k -> k in
+  let w = min 16 (l.lc.(5) land 31) in
+  let crc_init = if l.lc.(5) land 32 <> 0 then (0xFFFF lsl (16 - w)) land m16 else 0 in
+  let tx_skip = l.lc.(17) land 0xFF and rx_skip = l.lc.(17) lsr 8 in
+  let poly = l.lc.(4) in
+  let owner_ok =
+    l.l_owner <= 2 && (match chip.th.(l.l_owner).state with Faulted _ -> false | _ -> true)
+  in
+  (* what the threads read during this cycle *)
+  l.l_snap.(0) <- line_status l; l.l_snap.(1) <- l.r_cnt; l.l_snap.(2) <- l.r_hist
+  ; l.l_snap.(3) <- l.r_crc; l.l_snap.(4) <- l.t_sent;
+  l.l_ev <- 0; l.l_mask <- 0;
+  let ev k = l.l_ev <- l.l_ev lor (1 lsl k) in
+  let cmd = l.l_cmd in
+  l.l_cmd <- 0;
+  let q_now = l.q_pend in
+  l.q_pend <- None;
+  let serve_w = l.r_wbuf and serve_r = l.t_req in
+  if cmd land 16 <> 0
+  then begin
+    l.t_done <- false; l.r_done <- false; l.r_crcok <- false; l.t_err <- 0; l.r_err <- 0;
+    Array.iter (fun q -> q.q_fired <- false) l.resp
+  end;
+  if not owner_ok
+  then begin
+    l.t_st <- 0; l.t_req <- None; l.r_st <- 0; l.r_wbuf <- None
+  end;
+  (* ---------------- receiver ---------------- *)
+  let rxp = (l.lc.(3) lsr 4) land 31 in
+  let dp = bitp pv rxp and dm = bitp pv (rxp + 1) in
+  let se0 = c 1 && dp = 0 && dm = 0 in
+  let lv = dp lxor inv in
+  let clkp = (l.lc.(3) lsr 9) land 31 in
+  let ck = bitp pv clkp and ckp = bitp pv_prev clkp in
+  let sample_edge = ext && (if c 14 then ckp = 1 && ck = 0 else ckp = 0 && ck = 1) in
+  let shift_edge = ext && (if c 14 then ckp = 0 && ck = 1 else ckp = 1 && ck = 0) in
+  let edge = lv <> l.r_lv in
+  l.r_lv <- lv;
+  if cmd land 8 <> 0 then l.r_st <- 0;
+  if cmd land 2 <> 0 && owner_ok
+  then begin
+    l.r_st <- 1; l.r_idle_seen <- false
+  end;
+  let sync_len = min 8 ((l.lc.(12) lsr 8) land 15) in
+  let started = ref false in
+  if l.r_st = 1
+  then
+    if ext || (l.r_idle_seen && lv <> idle && not se0)
+    then begin
+      started := true;
+      (* the first edge of a Manchester frame is taken as the middle of its first bit *)
+      l.r_ph <- (if code = 2 then per lsr 1 else 0); l.r_prev <- idle; l.r_hcnt <- 0; l.r_cnt <- 0; l.r_sh <- 0; l.r_hist <- 0
+      ; l.r_crc <- crc_init; l.r_run <- 0; l.r_last <- idle; l.r_quiet <- 0;
+      if sync_len = 0
+      then begin
+        l.r_st <- 3; ev 1
+      end
+      else l.r_st <- 2
+    end
+    else if lv = idle && not se0
+    then l.r_idle_seen <- true;
+  let boundary = ref false and strobe = ref false in
+  if ext
+  then begin
+    strobe := sample_edge; boundary := shift_edge
+  end
+  else begin
+    let sp = (per lsr 1) + ((per lsr 3) * ((l.lc.(15) lsr 8) land 3)) in
+    if l.r_st >= 2 && edge && not !started
+    then
+      if code = 2
+      then (
+        (* only an edge near the middle of a bit counts, for the phase and for the idle detection *)
+        if l.r_ph >= per lsr 2 && l.r_ph < per - (per lsr 2)
+        then begin
+          l.r_ph <- per lsr 1; l.r_quiet <- 0
+        end)
+      else begin
+        let sjw = l.lc.(15) land 0xFF in
+        if l.r_ph < sp
+        then l.r_ph <- (if sjw = 0xFF then 0 else l.r_ph - min l.r_ph (16 * sjw))
+        else if sjw = 0xFF || per - l.r_ph <= 16 * sjw
+        then begin
+          l.r_ph <- 0; boundary := true
+        end
+        else l.r_ph <- l.r_ph + (16 * sjw)
+      end;
+    strobe := l.r_ph < sp && l.r_ph + 16 >= sp;
+    let ph = l.r_ph + 16 in
+    if ph >= per
+    then begin
+      l.r_ph <- ph - per; boundary := true
+    end
+    else l.r_ph <- ph
+  end;
+  if l.r_st >= 2 && edge && code <> 2 then l.r_quiet <- 0;
+  let push_word idx d =
+    let ok =
+      owner_ok && idx < l.lc.(11) land 0x7FF
+      && (l.lc.(10) land 0x3FF) + idx < chip.th.(l.l_owner).dsize
+      && l.r_wbuf = None
+    in
+    if ok then l.r_wbuf <- Some (idx, d) else l.r_err <- l.r_err lor 2
+  in
+  let resp_check ~at_end =
+    Array.iteri
+      (fun k q ->
+        if q.q_ctl land 1 = 1 && (q.q_ctl lsr 5) land 1 = Bool.to_int at_end && l.q_pend = None
+        then begin
+          let pos = q.q_pos land 0x3FFF in
+          let pos_ok = match (q.q_ctl lsr 2) land 3 with 1 -> l.r_cnt = pos | 2 -> l.r_cnt >= pos | _ -> true in
+          let crc_ok = (q.q_ctl lsr 4) land 1 = 0 || l.r_crc = l.lc.(6) in
+          let ml = min 8 ((q.q_ctl lsr 6) land 15) in
+          let m = (q.q_match lsr 8) land ((1 lsl ml) - 1) in
+          if pos_ok && crc_ok && (l.r_hist lxor q.q_match) land m = 0
+          then begin
+            q.q_fired <- true; ev (9 + k); l.q_pend <- Some k;
+            if q.q_ctl land 2 <> 0 then q.q_ctl <- q.q_ctl land lnot 1
+          end
+        end)
+      l.resp
+  in
+  let frame_end () =
+    if l.r_cnt land 15 <> 0 then push_word (l.r_cnt lsr 4) l.r_sh;
+    l.r_done <- true; l.r_crcok <- l.r_crc = l.lc.(6); ev 2; ev (if l.r_crcok then 3 else 4);
+    resp_check ~at_end:true;
+    l.r_st <- (if c 0 then 1 else 0); l.r_idle_seen <- false
+  in
+  let finish () =
+    if l.r_st = 3
+    then frame_end ()
+    else begin
+      l.r_st <- 1; l.r_idle_seen <- false
+    end
+  in
+  if l.r_st >= 2 && !strobe
+  then begin
+    l.r_quiet <- l.r_quiet + 1;
+    let endc = l.lc.(13) in
+    if endc land 1 <> 0 && se0
+    then finish ()
+    else if endc land 4 <> 0 && l.r_quiet > max 1 (endc lsr 8)
+    then finish ()
+    else begin
+      let bit = if code = 1 then if lv = l.r_prev then 1 else 0 else lv in
+      l.r_prev <- lv;
+      (* the protected part of a frame: destuffed and covered by the CRC *)
+      let send = l.lc.(16) land 0x3FFF in
+      let prot = send = 0 || l.r_st = 2 || l.r_cnt < send in
+      let due = c 7 && prot && l.r_run >= stuff_n in
+      let track b =
+        if ones
+        then l.r_run <- (if b = 1 then l.r_run + 1 else 0)
+        else if b = l.r_last
+        then l.r_run <- l.r_run + 1
+        else begin
+          l.r_run <- 1; l.r_last <- b
+        end
+      in
+      if due && bit = (if ones then 0 else 1 - l.r_last)
+      then track bit (* a stuff bit: dropped *)
+      else begin
+        if due
+        then begin
+          l.r_err <- l.r_err lor 1; ev 5
+        end;
+        if due && endc land 2 <> 0
+        then finish ()
+        else begin
+          track bit;
+          l.r_hist <- ((l.r_hist lsl 1) lor bit) land m16;
+          if l.r_st = 2
+          then begin
+            l.r_hcnt <- min 8 (l.r_hcnt + 1);
+            let m = (1 lsl sync_len) - 1 in
+            if l.r_hcnt >= sync_len && l.r_hist land m = l.lc.(12) land m
+            then begin
+              l.r_st <- 3; ev 1
+            end
+          end
+          else begin
+            if l.r_cnt >= rx_skip && prot then l.r_crc <- crc_bit ~refl:false l.r_crc poly bit;
+            let pos = l.r_cnt land 15 in
+            l.r_sh <- l.r_sh lor (bit lsl (if c 6 then pos else 15 - pos));
+            l.r_cnt <- l.r_cnt + 1;
+            if l.r_cnt land 15 = 0
+            then begin
+              push_word ((l.r_cnt lsr 4) - 1) l.r_sh;
+              l.r_sh <- 0
+            end;
+            ev 0;
+            resp_check ~at_end:false;
+            if l.r_cnt = 0x3FF0
+            then begin
+              l.r_err <- l.r_err lor 2; frame_end ()
+            end
+            else if endc land 8 <> 0 && l.r_cnt = l.lc.(14) land 0x3FFF
+            then frame_end ()
+          end
+        end
+      end
+    end
+  end;
+  (* ---------------- transmitter ---------------- *)
+  let txp = l.lc.(3) land 15 in
+  let tlen = l.lc.(8) land 0x3FFF in
+  let wrote = ref false in
+  let idle_out () =
+    let o = idle lxor inv in
+    l.t_out <- o lor ((1 - o) lsl 1)
+  in
+  let finish_tx () =
+    l.t_st <- 0; l.t_done <- true; ev 8; wrote := true;
+    if c 15 then l.t_rel <- true else begin l.t_rel <- false; idle_out () end
+  in
+  let send_logical b =
+    if ones
+    then l.t_run <- (if b = 1 then l.t_run + 1 else 0)
+    else if b = l.t_last
+    then l.t_run <- l.t_run + 1
+    else begin
+      l.t_run <- 1; l.t_last <- b
+    end;
+    (match code with
+     | 1 -> if b = 0 then l.t_line <- 1 - l.t_line
+     | 2 -> l.t_line <- 1 - b
+     | _ -> l.t_line <- b);
+    l.t_bit <- b; l.t_half <- false;
+    let o = l.t_line lxor inv in
+    l.t_out <- o lor ((1 - o) lsl 1); l.t_rel <- false; ev 6
+  in
+  let tail_or_finish () =
+    if l.t_tail < min 4 (l.lc.(9) land 7)
+    then begin
+      l.t_out <- (l.lc.(9) lsr (8 + (2 * l.t_tail))) land 3;
+      l.t_rel <- false; l.t_tail <- l.t_tail + 1; l.t_half <- true
+    end
+    else finish_tx ()
+  in
+  let coder_reset () =
+    l.t_run <- 0; l.t_last <- idle; l.t_line <- idle; l.t_acc <- 0; l.t_half <- false
+  in
+  let boundary_tx () =
+    match l.t_st with
+    | 2 ->
+      let more = l.t_sent < tlen || l.t_crcleft > 0 in
+      if c 7 && l.t_run >= stuff_n && (more || c 12)
+      then send_logical (if ones then 0 else 1 - l.t_last)
+      else if l.t_sent < tlen
+      then begin
+        let pos = l.t_sent land 15 in
+        if pos = 0 && l.t_sent > 0
+        then begin
+          if not l.t_nvalid then l.t_err <- l.t_err lor 1;
+          l.t_word <- (if l.t_nvalid then l.t_next else 0);
+          l.t_nvalid <- false;
+          if l.t_sent + 16 < tlen then l.t_req <- Some ((l.t_sent lsr 4) + 1)
+        end;
+        let b = (l.t_word lsr (if c 6 then pos else 15 - pos)) land 1 in
+        if l.t_sent >= tx_skip then l.t_crc <- crc_bit ~refl:false l.t_crc poly b;
+        l.t_sent <- l.t_sent + 1;
+        if l.t_sent = tlen then l.t_crcleft <- w;
+        send_logical b
+      end
+      else if l.t_crcleft > 0
+      then begin
+        let b = ((l.t_crc lsr 15) land 1) lxor ((l.lc.(5) lsr 6) land 1) in
+        l.t_crc <- (l.t_crc lsl 1) land m16;
+        l.t_crcleft <- l.t_crcleft - 1;
+        send_logical b
+      end
+      else begin
+        l.t_st <- 3; l.t_tail <- 0; tail_or_finish ()
+      end
+    | 3 -> tail_or_finish ()
+    | 5 ->
+      if l.t_rleft > 0
+      then begin
+        let b = l.t_rsh land 1 in
+        l.t_rsh <- l.t_rsh lsr 1; l.t_rleft <- l.t_rleft - 1;
+        send_logical b
+      end
+      else if l.t_rtail
+      then begin
+        l.t_st <- 3; l.t_tail <- 0; tail_or_finish ()
+      end
+      else finish_tx ()
+    | _ -> ()
+  in
+  if cmd land 4 <> 0
+  then begin
+    l.t_st <- 0; l.t_req <- None
+  end;
+  (match q_now with
+   | Some k when l.t_st = 0 && owner_ok ->
+     let q = l.resp.(k) in
+     l.t_rwait <- (q.q_ctl lsr 10) land 15; l.t_rleft <- max 1 (min 16 (q.q_len land 31))
+     ; l.t_rsh <- q.q_reply; l.t_rtail <- q.q_len land 32 <> 0; l.t_st <- 4
+   | Some _ -> l.t_err <- l.t_err lor 4
+   | None -> ());
+  let begin_frame () =
+    coder_reset ();
+    l.t_crc <- crc_init; l.t_crcleft <- (if tlen = 0 then w else 0); l.t_st <- 2; l.t_bnd <- true; ev 7
+  in
+  if cmd land 1 <> 0 && l.t_st = 0 && owner_ok
+  then begin
+    l.t_sent <- 0; l.t_nvalid <- false; l.t_req <- None;
+    if tlen = 0
+    then begin_frame ()
+    else begin
+      l.t_st <- 1; l.t_req <- Some 0
+    end
+  end
+  else if l.t_st = 1 && l.t_nvalid
+  then begin
+    l.t_word <- l.t_next; l.t_nvalid <- false;
+    if tlen > 16 then l.t_req <- Some 1;
+    begin_frame ()
+  end
+  else if l.t_st = 4
+  then
+    if l.t_rwait = 0
+    then begin
+      coder_reset ();
+      l.t_st <- 5; l.t_bnd <- true; ev 7
+    end
+    else if !boundary
+    then l.t_rwait <- l.t_rwait - 1;
+  if l.t_st = 2 || l.t_st = 3 || l.t_st = 5
+  then begin
+    if l.t_bnd
+    then boundary_tx ()
+    else if code = 2 && (not l.t_half) && l.t_acc >= per lsr 1
+    then begin
+      (* second half of a Manchester symbol *)
+      l.t_half <- true; l.t_line <- l.t_bit;
+      let o = l.t_line lxor inv in
+      l.t_out <- o lor ((1 - o) lsl 1)
+    end;
+    if l.t_st <> 0
+    then begin
+      wrote := true;
+      if ext
+      then l.t_bnd <- shift_edge
+      else begin
+        let a = l.t_acc + 16 in
+        if a >= per
+        then begin
+          l.t_acc <- a - per; l.t_bnd <- true
+        end
+        else begin
+          l.t_acc <- a; l.t_bnd <- false
+        end
+      end
+    end
+  end;
+  (* pad override: the transmit pin and, on a pair, the next pin, if the owner owns them *)
+  if !wrote && owner_ok
+  then begin
+    let m = ref 0 in
+    if chip.owner.(txp) = l.l_owner then m := 1 lsl txp;
+    if c 1 && txp < 15 && chip.owner.(txp + 1) = l.l_owner then m := !m lor (2 lsl txp);
+    let v = ((l.t_out land 1) lsl txp) lor (((l.t_out lsr 1) land 1) lsl (txp + 1)) in
+    let v = (if l.t_rel then chip.value else v) land !m in
+    let rise = !m land v land lnot chip.value and fall = !m land lnot v land chip.value in
+    match blocking_rules chip ~rise ~fall with
+    | [] ->
+      l.l_mask <- !m; l.l_val <- v; l.l_dir <- (if l.t_rel then 0 else !m land 0xFF)
+    | k :: _ ->
+      (* an edge of the unit that a hold or fail-stop rule forbids: the unit stops instead *)
+      record chip ~n k ~max_kind:false;
+      l.t_st <- 0; l.t_req <- None; l.t_err <- l.t_err lor 2
+  end;
+  (* data memory, system slot: one access per round, a received word first *)
+  if n land 3 = 1 && owner_ok
+  then begin
+    let th = chip.th.(l.l_owner) in
+    match serve_w, serve_r with
+    | Some (idx, d), _ ->
+      chip.data.((th.dbase + (l.lc.(10) land 0x3FF) + idx) land 1023) <- d;
+      l.r_wbuf <- None;
+      true
+    | None, Some idx ->
+      let a = (l.lc.(7) land 0x3FF) + idx in
+      if a < th.dsize
+      then l.t_next <- chip.data.((th.dbase + a) land 1023)
+      else begin
+        l.t_next <- 0; l.t_err <- l.t_err lor 1
+      end;
+      l.t_nvalid <- true;
+      if l.t_req = serve_r then l.t_req <- None;
+      true
+    | None, None -> false
+  end
+  else false
 ;;
 
 (* --- trace (doc/spec/trace.md) --- *)
@@ -1288,6 +1875,7 @@ let step chip ~pad =
   chip.ev_rise <- 0;
   chip.ev_fall <- 0;
   chip.cyc_emits <- [];
+  let line_uses_slot = line_cycle chip ~n ~pv ~pv_prev in
   Array.iter
     (fun th ->
       (* fetch, on the state the thread has during this cycle *)
@@ -1304,10 +1892,22 @@ let step chip ~pad =
         execute chip th ~n ~pv w
       | _ -> ())
     chip.th;
+  (* while the line unit transmits, its pins follow it and not the commits of a thread *)
+  (let l = chip.line in
+   if l.l_mask <> 0
+   then begin
+     chip.ev_rise <- chip.ev_rise land lnot l.l_mask lor (l.l_mask land l.l_val land lnot chip.value);
+     chip.ev_fall <- chip.ev_fall land lnot l.l_mask lor (l.l_mask land lnot l.l_val land chip.value);
+     chip.value_n <- chip.value_n land lnot l.l_mask lor l.l_val;
+     let m8 = l.l_mask land 0xFF in
+     chip.dir_n <- chip.dir_n land lnot m8 lor (l.l_dir land m8)
+   end);
   rules_update chip ~n ~pv ~pv_prev;
-  let host_uses_slot = match chip.host.req with Some (false, _, _, _) -> n land 3 = 1 | _ -> false in
-  host_cycle chip ~n ~pv ~pv_prev;
-  trace_cycle chip ~n ~pv ~pv_prev ~slot_free:(not host_uses_slot);
+  let host_uses_slot =
+    match chip.host.req with Some (false, _, _, _) -> n land 3 = 1 && not line_uses_slot | _ -> false
+  in
+  host_cycle chip ~n ~pv ~pv_prev ~slot_free:(not line_uses_slot);
+  trace_cycle chip ~n ~pv ~pv_prev ~slot_free:(not (host_uses_slot || line_uses_slot));
   for k = 7 downto 1 do chip.oe_hist.(k) <- chip.oe_hist.(k - 1) done;
   (* pins without a thread as owner hold the safe pattern *)
   let unowned = ref 0 in

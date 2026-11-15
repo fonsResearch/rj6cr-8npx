@@ -20,7 +20,7 @@ a ring.
 ## 2. Rate and loss
 
 The four words of a record are written one per round, in the system slot of the data memory, and only in
-slots the host port does not use. A record therefore takes 16 cycles or more.
+slots neither the line unit nor the host port uses. A record therefore takes 16 cycles or more.
 
 - A change or EMIT while a record is being written is not recorded and sets a pending "lost" mark.
 - When the writer is free and the mark is set, a pin record of the current cycle is written with its
@@ -69,5 +69,5 @@ bits.
 
 ## 7. Open points
 
-1. Slot order once the line unit streams into the data memory: line unit, host, trace.
+1. (closed) Slot order: line unit, host, trace.
 2. Whether a record for the verdict itself is worth its 16 cycles (the verdict registers already hold it).

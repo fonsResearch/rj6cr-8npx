@@ -1,9 +1,9 @@
 # Machine model: threads, time and pins
 
-Draft 0.3 of 2026-11-14. Normative once frozen; until then `spec/model.ml` and this text are changed
+Draft 0.4 of 2026-11-15. Normative once frozen; until then `spec/model.ml` and this text are changed
 together. Scope: the three program threads, their timing hardware, the pad stage, memory windows, faults.
-The rule engine is in `rules.md`, the host port and loader in `host.md`, the trace in `trace.md`. Not
-yet specified: line unit, response rules. Instruction encodings are in `isa.md`, generated from `spec/isa.ml`.
+The rule engine is in `rules.md`, the host port and loader in `host.md`, the trace in `trace.md`, the
+line unit and the response rules in `line.md`. Instruction encodings are in `isa.md`, generated from `spec/isa.ml`.
 
 Every statement below is implemented in `spec/model.ml`; the tests named in section 12 show the timing
 statements on running programs.
@@ -166,10 +166,11 @@ least 12 cycles after the cycle in which the event commit became visible; with `
   them an access waits for ever.
 - Status bits (BST, WAITS, I/O register 0): 0 EV, 1 mailbox from host not empty, 2 mailbox to host not
   full, 3 LATE (sticky), 4 FAIL recorded, 5 BLAME recorded, 6 a rule was repaired (`rules.md`). Bits 7 to
-  15 read 0 until the line unit and response rule documents define them.
+  13 belong to the line unit and read 0 for every thread but its owner (`line.md`, section 2). Bits 14
+  and 15 read 0.
 - I/O register 0: read gives the status bits; writing 1 to bit 0 or bit 3 clears EV or LATE. Registers
-  0x20 and up are the rule measurements (`rules.md`, section 8). Any other address is the fault IOPERM
-  until the documents of the other blocks define it.
+  0x20 and up are the rule measurements (`rules.md`, section 8). Registers 0x40 to 0x6F are the line
+  unit's, for its owner only (`line.md`, section 3). Any other address is the fault IOPERM.
 
 ## 9. Faults
 
@@ -206,6 +207,9 @@ The table in `isa.md` gives one line per instruction; where it is not exhaustive
 ## 11. Hooks for blocks not yet specified
 
 - EMIT produces (thread, code) in its execute cycle for the rule engine, and for the trace.
+- While the line unit sends, it decides the value and direction of its pins; a thread's commit to those
+  pins is dropped in those cycles (`line.md`, section 4).
+- System slot of the data memory: line unit, then host, then trace.
 
 ## 12. Tests
 
@@ -273,7 +277,7 @@ To be confirmed or changed when the documents are frozen.
 
 1. Whether the "timing events first" order, which puts the fire decision in front of the execute stage,
    meets 48 MHz with the rule engine's blocking decision in that path (`rules.md`, open point 2).
-2. Status bits 7 to 15 and the rest of the I/O register map.
+2. Status bits 14 and 15 are unused.
 3. Firmware rates quoted in the architecture document were estimates. On the model, a serial bit takes
    two instructions, 8 cycles (6 Mbit/s at 48 MHz), and an SPI controller bit three instructions, 12
    cycles (4 MHz); the SPI test exchanges a byte each way at that rate and faults at 10 cycles.

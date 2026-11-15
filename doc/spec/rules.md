@@ -42,6 +42,7 @@ A selector is `[9:7]` class, `[6:5]` qualifier, `[4:0]` index.
 | 2 | a commit that fires in cycle n raises the value of the pin | pin 0..15 | 0 |
 | 3 | a commit that fires in cycle n lowers the value of the pin | pin 0..15 | 0 |
 | 5 | the rule's owner thread executes EMIT with this code in cycle n | code 0..31 | 0 |
+| 6 | a line unit symbol in cycle n (`line.md`, section 7) | symbol 0..10 | 0 |
 
 "As read" is the value a thread reads (`machine.md`, section 3): the synchronised input for P0..P7 and
 P16..P23, the output value for P8..P15. A commit that fires in cycle n changes the pads in cycle n+1, so
@@ -162,7 +163,8 @@ are the part that can be dropped or kept only for some slots; that is decided wi
 
 ## 12. Open points
 
-1. Line-unit symbols as events (class 6 is kept free for them).
+1. (closed) Line-unit symbols are class 6 events. Edges made by the line unit are class 2 and 3 events;
+   a hold or fail-stop rule that would keep one back stops the unit instead (`line.md`, section 4).
 2. Whether the blocking decision, which sits in front of the fire decision and the execute stage, meets
    48 MHz. Fallback: compute it one cycle ahead; every input is a register, and L changes by at most one
    per cycle.
