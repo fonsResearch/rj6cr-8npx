@@ -21,3 +21,14 @@
  (alias runtest)
  (action
   (diff fig/timing_contract.csv timing_contract.csv.gen)))
+
+; state_bits.md is the register table of the specification circuit (spec/circuit/state.ml).
+(rule
+ (with-stdout-to
+  state_bits.md.gen
+  (run %{exe:../../spec/circuit/bin/gen_state_table.exe})))
+
+(rule
+ (alias runtest)
+ (action
+  (diff state_bits.md state_bits.md.gen)))

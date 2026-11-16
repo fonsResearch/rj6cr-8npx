@@ -1,7 +1,7 @@
 # Machine model: threads, time and pins
 
-Draft 0.4 of 2026-11-15. Normative once frozen; until then `spec/model.ml` and this text are changed
-together. Scope: the three program threads, their timing hardware, the pad stage, memory windows, faults.
+Version 1.0, frozen 2026-11-16 (`doc/decisions/spec_freeze.md`); changed only together with
+`spec/model.ml` and `spec/circuit/`. Scope: the three program threads, their timing hardware, the pad stage, memory windows, faults.
 The rule engine is in `rules.md`, the host port and loader in `host.md`, the trace in `trace.md`, the
 line unit and the response rules in `line.md`. Instruction encodings are in `isa.md`, generated from `spec/isa.ml`.
 
@@ -255,9 +255,9 @@ Shared: `now` 32; pad registers 24; pin configuration (owner, open drain, safe p
 counting pipeline registers. Rule engine: 122 bits per rule and 131 shared (`rules.md`, section 9). Host
 port and loader: about 313 bits (`host.md`, section 5). Trace: about 140 bits (`trace.md`, section 5).
 
-## 14. Decisions taken in this draft
+## 14. Decisions taken in this document
 
-To be confirmed or changed when the documents are frozen.
+Listed with the other decisions in `doc/decisions/spec_freeze.md`.
 
 | # | decision | alternative and its cost |
 |---|---|---|

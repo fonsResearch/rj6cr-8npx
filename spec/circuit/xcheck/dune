@@ -1,0 +1,4 @@
+; Lockstep of the reference model and the specification circuit.
+(library
+ (name spec_xcheck)
+ (libraries base stdio hardcaml spec spec_circuit))

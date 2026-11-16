@@ -22,3 +22,6 @@ _build/
 work/
 __pycache__/
 *.pyc
+
+# Local mapping output (flow/map/map_spec.sh)
+flow/map/out/

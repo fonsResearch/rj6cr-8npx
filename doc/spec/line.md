@@ -1,7 +1,7 @@
 # Line unit and response rules
 
-Draft 0.1 of 2026-11-15. Normative once frozen; until then `spec/model.ml` (`line_cycle`) and this text
-are changed together. The line unit sends and receives frames of a bit-serial line code at rates the
+Version 1.0, frozen 2026-11-16 (`doc/decisions/spec_freeze.md`); changed only together with
+`spec/model.ml` (`line_cycle`) and `spec/circuit/`. The line unit sends and receives frames of a bit-serial line code at rates the
 threads cannot reach (down to one bit per cycle), and two response rules answer inside a frame without
 an instruction being executed. Registers, pins and time are as in `machine.md`.
 
@@ -221,7 +221,7 @@ Limits these results show:
 - The clock recovery was exercised with uniform random edge displacement, not with a model of a real
   line receiver, and not with a noisy line.
 
-## 10. Decisions taken in this draft
+## 10. Decisions taken in this document
 
 | # | decision | alternative, and its cost |
 |---|---|---|

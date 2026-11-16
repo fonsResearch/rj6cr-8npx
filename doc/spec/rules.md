@@ -1,6 +1,6 @@
 # Rule engine and enforcement
 
-Draft 0.1 of 2026-11-14, not frozen. Executable form: `spec/model.ml` (`rules_update`, `may_fire`,
+Version 1.0, frozen 2026-11-16 (`doc/decisions/spec_freeze.md`). Executable form: `spec/model.ml` (`rules_update`, `may_fire`,
 `record`); examples in `spec/test/test_rules.ml`. Read `machine.md` first.
 
 ## 1. What a rule is

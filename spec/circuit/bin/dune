@@ -1,0 +1,9 @@
+(executable
+ (name gen_state_table)
+ (modules gen_state_table)
+ (libraries base stdio hardcaml spec_circuit))
+
+(executable
+ (name emit_spec_circuit)
+ (modules emit_spec_circuit)
+ (libraries base stdio hardcaml spec_circuit))

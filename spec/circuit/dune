@@ -1,0 +1,6 @@
+; Specification circuit: the reference model (spec/model.ml) as a Hardcaml circuit.
+(library
+ (name spec_circuit)
+ (libraries base hardcaml spec)
+ (preprocess
+  (pps ppx_hardcaml)))

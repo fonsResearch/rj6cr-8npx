@@ -1,0 +1,6 @@
+(library
+ (name spec_circuit_test)
+ (libraries base stdio hardcaml spec spec_circuit spec_xcheck)
+ (inline_tests)
+ (preprocess
+  (pps ppx_expect)))

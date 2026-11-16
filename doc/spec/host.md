@@ -1,6 +1,6 @@
 # Host port and loader
 
-Draft 0.1 of 2026-11-14, not frozen. Executable form: `spec/model.ml` (`host_cycle`, `reg_peek`,
+Version 1.0, frozen 2026-11-16 (`doc/decisions/spec_freeze.md`). Executable form: `spec/model.ml` (`host_cycle`, `reg_peek`,
 `reg_write`, `prog_write`); examples in `spec/test/test_host.ml`. Read `machine.md` first.
 
 ## 1. Pins and sampling
@@ -42,7 +42,9 @@ addresses increment per word; only the low 9 (program) or 10 (data) bits are use
   side effect (the mailbox) takes effect only when the last bit of that word has been clocked.
 - Memory accesses are carried out in the system slot of the round (`machine.md`, section 2), at most 4
   cycles after the word is complete or the address is known, or one round later for each data-memory
-  slot the line unit takes. Reads are fetched one word ahead.
+  slot the line unit takes. Reads are fetched one word ahead. The memories have a synchronous read: a
+  word read in a slot reaches the output shift register's source (`rbuf`) in the next cycle, never in the
+  slot itself.
 - The data memory is not gated: the host can read and write any word at any time, including words inside
   a running thread's data window. That is the intended way to pass bulk data.
 

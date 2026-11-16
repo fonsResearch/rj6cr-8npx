@@ -1,13 +1,7 @@
-(* Reference model of the core: three threads, their timing hardware and the pad stage,
-   one call of [step] per clock cycle. It is the executable form of doc/spec/machine.md.
-
-   and of the rule engine (doc/spec/rules.md).
-
-   and of the host port and loader (doc/spec/host.md).
-
-   and of the trace (doc/spec/trace.md).
-
-   Not modelled yet (their documents are not written): line unit, response rules. *)
+(* Reference model of the chip, one call of [step] per clock cycle. It is the executable form of
+   doc/spec/machine.md (threads, timing hardware, pads), rules.md (rule engine), host.md (host port
+   and loader), trace.md (trace) and line.md (line unit and response rules). spec/circuit/ is the
+   same specification as a circuit; log/xcheck.md compares the two. *)
 open Isa
 
 let m16 = 0xFFFF
@@ -132,6 +126,7 @@ type host =
   ; mutable osh : int (* output shift register, bit 31 first *)
   ; mutable miso : int
   ; mutable rbuf : int (* memory word read ahead *)
+  ; mutable rpend : int option (* a word read in the previous cycle, entering rbuf now *)
   ; mutable req : (bool * bool * int * int) option (* program memory?, write?, address, data *)
   }
 
@@ -284,7 +279,7 @@ let create ?(fifo_depth = 1) ?(n_rules = 4) () =
   ; pv_prev = 0; emits = []; fifo_depth; rules = Array.init n_rules (fun _ -> new_rule ())
   ; first_fail = None; first_blame = None; blame_before_fail = false; oe_hist = Array.make 8 0
   ; ev_rise = 0; ev_fall = 0; cyc_emits = []; hstat = 0; now_latch = 0
-  ; host = { count = 0; sh = 0; cmd = 0; haddr = 0; osh = 0; miso = 0; rbuf = 0; req = None }
+  ; host = { count = 0; sh = 0; cmd = 0; haddr = 0; osh = 0; miso = 0; rbuf = 0; rpend = None; req = None }
   ; tr_en = false; tr_freeze = false; tr_base = 0; tr_size = 0; tr_mask = 0; tr_post = 4; tr_ptr = 0
   ; tr_wrapped = false; tr_frozen = false; tr_trig = false; tr_left = 0; tr_rec = Array.make 4 0
   ; tr_widx = 4; tr_lost = false; line = new_line () }
@@ -1226,14 +1221,20 @@ let cmd_info = function
 let host_cycle chip ~n ~pv ~pv_prev ~slot_free =
   let b k = (pv lsr k) land 1 and bp k = (pv_prev lsr k) land 1 in
   let h = chip.host in
+  (* the memories have a synchronous read: a word read in cycle n is in rbuf from cycle n + 1 *)
+  (match h.rpend with
+   | Some v ->
+     h.rbuf <- v;
+     h.rpend <- None
+   | None -> ());
   (* a waiting memory access is done in the system slot of its memory *)
   (match h.req with
    | Some (prog, write, a, d) when (prog && n land 3 = 3) || ((not prog) && n land 3 = 1 && slot_free) ->
      if prog
-     then if write then ignore (prog_write chip a d) else h.rbuf <- chip.prog.(a land 511)
+     then if write then ignore (prog_write chip a d) else h.rpend <- Some chip.prog.(a land 511)
      else if write
      then chip.data.(a land 1023) <- d land m16
-     else h.rbuf <- chip.data.(a land 1023);
+     else h.rpend <- Some chip.data.(a land 1023);
      h.req <- None
    | _ -> ());
   if b 18 = 1

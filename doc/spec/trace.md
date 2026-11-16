@@ -1,6 +1,6 @@
 # Trace
 
-Draft 0.1 of 2026-11-14, not frozen. Executable form: `spec/model.ml` (`trace_cycle`,
+Version 1.0, frozen 2026-11-16 (`doc/decisions/spec_freeze.md`). Executable form: `spec/model.ml` (`trace_cycle`,
 `trace_records`); examples in `spec/test/test_trace.ml`.
 
 ## 1. What is recorded

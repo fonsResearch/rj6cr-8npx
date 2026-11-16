@@ -1,0 +1,3 @@
+(executable
+ (name xcheck)
+ (libraries base stdio spec_xcheck))
