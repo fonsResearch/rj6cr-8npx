@@ -1,0 +1,6 @@
+; Copy of spec/circuit (commit 64916bc) with the area-proxy changes of ../README.md.
+(library
+ (name skel_core_lib)
+ (libraries base hardcaml spec)
+ (preprocess
+  (pps ppx_hardcaml)))

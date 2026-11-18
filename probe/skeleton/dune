@@ -1,0 +1,11 @@
+(library
+ (name skeleton)
+ (modules skeleton)
+ (libraries base hardcaml skel_core_lib)
+ (preprocess
+  (pps ppx_hardcaml)))
+
+(executable
+ (name emit_skeleton)
+ (modules emit_skeleton)
+ (libraries hardcaml skeleton))

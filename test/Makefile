@@ -6,13 +6,21 @@ SIM ?= icarus
 FST ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
-PROJECT_SOURCES = project.v
+PROJECT_SOURCES = project.v skel_core.v
+
+# IHP SRAM behavioural models (copies from IHP-Open-PDK 89d42ee6). The gate-level netlist
+# keeps the macros as black boxes, so both builds need them.
+SRAM_MODELS = $(PWD)/models/RM_IHPSG13_1P_512x32_c2_bm_bist.v \
+              $(PWD)/models/RM_IHPSG13_1P_1024x16_c2_bm_bist.v \
+              $(PWD)/models/RM_IHPSG13_1P_core_behavioral_bm_bist.v
 
 ifneq ($(GATES),yes)
 
 # RTL simulation:
 SIM_BUILD				= sim_build/rtl
 VERILOG_SOURCES += $(addprefix $(SRC_DIR)/,$(PROJECT_SOURCES))
+VERILOG_SOURCES += $(SRAM_MODELS)
+COMPILE_ARGS    += -DSIM -DFUNCTIONAL
 
 else
 
@@ -32,6 +40,7 @@ VERILOG_SOURCES += $(PDK_LIBS_REF)/$(PDK_CELL_PREFIX)_stdcell/verilog/$(PDK_CELL
 
 # this gets copied in by the GDS action workflow
 VERILOG_SOURCES += $(PWD)/gate_level_netlist.v
+VERILOG_SOURCES += $(SRAM_MODELS)
 
 endif
 
