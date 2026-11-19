@@ -100,6 +100,8 @@
   "//": "Skeleton diagnosis: bounded routing iterations so that the run ends with its reports.",
   "GRT_OVERFLOW_ITERS": 10,
   "DRT_OPT_ITERS": 3,
+  "//": "Skeleton diagnosis: no signal routing on Metal4 over the macros (their signal pins are on Metal2).",
+  "ROUTING_OBSTRUCTIONS": ["Metal4 48.0 41.58 464.64 232.92", "Metal4 587.52 41.58 824.32 378.04"],
   "DRT_SAVE_DRC_REPORT_ITERS": 1,
   "//": "Skeleton gate: the DELAY strategies of ABC pick I/O pad drivers as buffers; they are excluded.",
   "EXTRA_EXCLUDED_CELLS": ["sg13cmos5l_IOPadIn", "sg13cmos5l_IOPadOut4mA", "sg13cmos5l_IOPadOut16mA", "sg13cmos5l_IOPadOut30mA", "sg13cmos5l_IOPadInOut4mA", "sg13cmos5l_IOPadInOut16mA", "sg13cmos5l_IOPadInOut30mA", "sg13cmos5l_IOPadTriOut4mA", "sg13cmos5l_IOPadTriOut16mA", "sg13cmos5l_IOPadTriOut30mA"],
