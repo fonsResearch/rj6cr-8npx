@@ -54,7 +54,7 @@
         "nom_slow_1p08V_125C": ["pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_512x32_c2_bm_bist_slow_1p08V_125C.lib"]
       },
       "instances": {
-        "core.u_prog": { "location": [1261.92, 41.58], "orientation": "FS" }
+        "core.u_prog": { "location": [1127.04, 41.58], "orientation": "FS" }
       }
     },
     "RM_IHPSG13_1P_1024x16_c2_bm_bist": {
@@ -69,7 +69,7 @@
         "nom_slow_1p08V_125C": ["pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_1024x16_c2_bm_bist_slow_1p08V_125C.lib"]
       },
       "instances": {
-        "core.u_data": { "location": [992.16, 41.58], "orientation": "FS" }
+        "core.u_data": { "location": [722.4, 41.58], "orientation": "FS" }
       }
     }
   },
@@ -79,12 +79,12 @@
     "core\\.u_(prog|data) VPWR VGND VDDARRAY! VSS!"
   ],
   "PDN_OBSTRUCTIONS": [
-    "Metal4 1086.52 0 1095.24 710.64",
-    "Metal4 1131.48 0 1134.58 710.64",
-    "Metal4 1227.02 0 1230.12 710.64",
-    "Metal4 1446.20 0 1454.92 710.64",
-    "Metal4 1491.16 0 1494.26 710.64",
-    "Metal4 1676.62 0 1679.72 710.64"
+    "Metal4 816.76 0 825.48 710.64",
+    "Metal4 861.72 0 864.82 710.64",
+    "Metal4 957.26 0 960.36 710.64",
+    "Metal4 1311.32 0 1320.04 710.64",
+    "Metal4 1356.28 0 1359.38 710.64",
+    "Metal4 1541.74 0 1544.84 710.64"
   ],
   "TILE_STRIPE_FULL_SPAN": true,
   "TILE_STRIPE_CROSS_PIN_GAPS": true,
