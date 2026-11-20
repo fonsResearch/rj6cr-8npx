@@ -97,6 +97,8 @@
   "FP_MACRO_VERTICAL_HALO": 0.48,
   "RUN_POST_GRT_DESIGN_REPAIR": true,
   "GRT_DESIGN_REPAIR_MAX_CAP_PCT": 30,
+  "//": "Skeleton floorplan A: no cells under, between or beside the macros, so no net has to cross one.",
+  "FP_OBSTRUCTIONS": [[2.88, 3.78, 834.32, 388.04]],
   "//": "Skeleton diagnosis: bounded routing iterations so that the run ends with its reports.",
   "GRT_OVERFLOW_ITERS": 10,
   "DRT_OPT_ITERS": 3,
