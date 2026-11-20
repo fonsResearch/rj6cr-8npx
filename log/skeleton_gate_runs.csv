@@ -1,0 +1,18 @@
+run_id,branch,netlist,local_area_um2,synth_strategy,pads_excluded,density_pct,floorplan,synth_area_um2,gpl_util_pct,m2_usage_pct,m3_usage_pct,m4_usage_pct,grt_overflow,drt_violations,drt_iteration,outcome
+44263525053,probe-skeleton,shared+peek1,524159,DELAY 4,no,60,probe,1279130,98.2,,,,,,,GPL-0010 placement failed (pad cells and buffers)
+44263529323,probe-skeleton-d70,shared+peek1,524159,DELAY 4,no,70,probe,,,,,,,,,placement failed as above
+44266376536,probe-skeleton-dly,shared+peek1,524159,DELAY 4,yes,70,probe,1037014,109.5,,,,,,,GPL-0301 utilisation over 100 %
+44266368498,probe-skeleton,shared+peek1,524159,AREA 0,yes,70,probe,534979,60.4,80.48,137.78,55.79,95528,,,global routing not converged at 6 h limit
+44266372770,probe-skeleton-a2,shared+peek1,524159,AREA 2,yes,70,probe,531679,59.9,91.59,144.47,50.10,112447,,0,cancelled in detailed routing at 6 h
+44324689627,probe-skeleton-s434,without rules,433674,AREA 0,yes,70,probe,442618,49.3,83.19,108.03,36.81,45847,134696,2,cancelled in detailed routing at 6 h
+44324693646,probe-skeleton-s373,without rules+line,373022,AREA 0,yes,70,probe,382856,42.7,75.88,81.43,47.13,24140,30786,7,cancelled in detailed routing at 6 h
+44324698865,probe-skeleton-s308,without rules+line+peek+trace,308260,AREA 0,yes,70,probe,312299,34.9,53.53,57.81,28.29,4400,3992,32,cancelled in detailed routing at 6 h
+44465950966,probe-skeleton-diag,shared+peek1,524159,AREA 0,yes,70,probe,534979,60.4,,,,,470725,12,cancelled in Magic DRC at 6 h (DRT_OPT_ITERS 12)
+44465948043,probe-skeleton-s308-diag,without rules+line+peek+trace,308260,AREA 0,yes,70,probe,312299,34.9,,,,,14988,12,cancelled in Magic DRC at 6 h (DRT_OPT_ITERS 12)
+44520162844,probe-skeleton-s308-f1,without rules+line+peek+trace,308260,AREA 0,yes,70,F1 data 992.16 prog 1261.92,,,,,,,,,stripe check C4: 6 short pin boxes in narrow gaps
+44520166975,probe-skeleton-s434-f1,without rules,433674,AREA 0,yes,70,F1 data 992.16 prog 1261.92,,,,,,,,,stripe check C4 as above
+44522159936,probe-skeleton-s308-f2,without rules+line+peek+trace,308260,AREA 0,yes,70,F2 data 722.40 prog 1127.04,312299,34.9,52.76,59.81,23.76,7546,35856,6,cancelled in detailed routing at 6 h (DRT_OPT_ITERS 12)
+44522164939,probe-skeleton-s434-f2,without rules,433674,AREA 0,yes,70,F2 data 722.40 prog 1127.04,442618,49.3,74.40,90.93,40.66,25584,72652,3,cancelled in detailed routing at 6 h (DRT_OPT_ITERS 12)
+44586255761,probe-skeleton-s308-d3,without rules+line+peek+trace,308260,AREA 0,yes,70,probe,312299,34.9,,,,,15613,3,ended with reports (DRT_OPT_ITERS 3); Metal4 violations over the data macro
+44621957176,probe-skeleton-s308-m4,without rules+line+peek+trace,308260,AREA 0,yes,70,probe + Metal4 routing obstruction over macros,312299,34.9,,,,,11004,3,ended with reports; nets still cross the data macro on Metal4
+44621963119,probe-skeleton-s434-m4,without rules,433674,AREA 0,yes,70,probe + Metal4 routing obstruction over macros,442618,49.3,80.30,107.47,36.43,44181,205743,2,cancelled in detailed routing at 6 h

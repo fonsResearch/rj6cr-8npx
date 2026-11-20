@@ -1,0 +1,71 @@
+# Skeleton gate G1 (plan step 4), status 2026-11-20
+
+Gate G1: detailed routing clean and slow-corner setup slack at least +1.0 ns at 20.83 ns.
+**Result so far: G1 fails.** No skeleton configuration has routed. The step is open; the options are
+in section 5.
+
+## 1. Test load
+
+Branch `probe-skeleton` (`probe/skeleton/README.md`): the specification circuit of commit 64916bc
+with one execute stage for all threads and one host register read multiplexer, both SRAM macros at
+the probed positions (program 48.00, data 587.52, y 41.58, FS), the chip's pins. Local mapping
+524,159 um^2 [measured, typical liberty]. Size points remove blocks (`SKEL_CUT`). All runs on
+GitHub-hosted runners, 6 h job limit; a cancelled job uploads no artifacts, so its evidence is the
+job log. Every run: `log/skeleton_gate_runs.csv`.
+
+## 2. Flow findings [measured]
+
+1. With `SYNTH_STRATEGY` "DELAY 4", ABC's buffering stage maps nets to I/O pad cells
+   (`IOPadOut4mA` x22, `IOPadOut16mA` x3: 360,000 um^2): synthesis reads the `sg13cmos5l_io`
+   liberty and the PDK's `synth_exclude.cells` does not list pads. Excluding them
+   (`EXTRA_EXCLUDED_CELLS`) still leaves 1,037,014 um^2 (32,808 `buf_1`). "AREA 0" gives 534,979
+   and "AREA 2" 531,679 um^2. Every later run uses "AREA 0" with the pads excluded.
+2. Yosys FSM extraction did not finish on the specification circuit in 38 minutes; with
+   `(* fsm_encoding = "none" *)` on every register it maps in 49 s with FSM passes on.
+3. The synchronous clear ties `RESET_B` of every flop high through its own `tiehi`
+   (3,426 cells, 25k um^2) besides the clear gate on D.
+4. Signal routing is Metal2 to Metal4 (`RT_MAX_LAYER` Metal4, TopMetal1 reserved for the chip
+   grid); Metal3 is the only horizontal layer; `GRT_ADJUSTMENT` 0.3.
+5. A macro placement with a 33 um gap between macros (x 992.16 / 1261.92) fails the stripe check
+   C4: the PDN generator leaves Metal4 power pin boxes that reach neither die edge.
+
+## 3. Routing results
+
+![Routing demand against cell area](fig/skeleton_routing_demand.png)
+
+| netlist (synthesis) | floorplan | util. | Metal3 use | GRT overflow | DRT violations (iteration) |
+|---|---|---|---|---|---|
+| 534,979 | probed | 60.4 % | 137.8 % | 95,528 | global routing not converged in 6 h |
+| 442,618 (no rule engine) | probed | 49.3 % | 108.0 % | 45,847 | 134,696 (2) |
+| 442,618 | data 722.40, program 1127.04 | 49.3 % | 90.9 % | 25,584 | 72,652 (3) |
+| 442,618 | probed, Metal4 obstruction | 49.3 % | 107.5 % | 44,181 | 205,743 (2) |
+| 382,856 (also no line unit) | probed | 42.7 % | 81.4 % | 24,140 | 30,786 (7) |
+| 312,299 (also no host read, trace) | probed | 34.9 % | 57.8 % | 4,400 | 3,992 (32) |
+| 312,299 | data 722.40, program 1127.04 | 34.9 % | 59.8 % | 7,546 | 35,856 (6) |
+| 312,299 | probed, 3 iterations | 34.9 % | | | 15,613 (3), with reports |
+| 312,299 | probed, Metal4 obstruction, 3 iterations | 34.9 % | | | 11,004 (3), with reports |
+
+## 4. Where the 312k point fails [measured, run 44586255761 and 44621957176]
+
+- 3,888 Metal4 violations, nearly all inside the data macro outline (x 587.5-824.3, y 41.6-378.0);
+  1,953 are shorts with VPWR or VGND. Nets whose cells lie on both sides of the macro cross it
+  on Metal4 with wrong-way jogs (example `_03475_`: x 587.0 to 616.8 at y 92.8). A Metal4
+  `ROUTING_OBSTRUCTIONS` over the macro outline was created (step log) and the crossings remained.
+- 11,700 Metal2/Metal3 violations at y 300-500 along and above the data macro's pin edge and
+  around x 1000.
+- For comparison (earlier 6x4 work, two macros, 30 MHz): 43.5 % and 46.9 % routed with 0 DRC,
+  56.7 % did not. The skeleton fails at 34.9 %: the failure is placement across the 336 um tall
+  data macro, not only size [inference].
+
+## 5. Options (decision pending)
+
+The minimum configuration of the specification does not route on 8x4 in this floorplan, and its
+size alone (535k) is above every routed point.
+
+| option | changes a ratified item | expected effect | cost |
+|---|---|---|---|
+| A. Floorplan: confine logic to one side of the data macro (placement region or a narrow macro column on one edge), keep 1024x16 | no | removes the macro crossings; does not fix the 535k size | 1-2 runs, 6 h each |
+| B. Data memory 1024x16 replaced by 512x16 (191 um tall) or 256x16 | yes (memory size, R-item) | smaller crossing obstacle, 34-51k um^2 freed | spec change for trace and line streaming depth |
+| C. Chip RTL written for area (one register-file read path per port, one decoder, shared timing compare where legal), size measured before it is hardened | no | unknown until written; the skeleton's execute alone is about 86k um^2 of logic | RTL step first, gate after |
+| D. Scope: 2 threads, 2 rule slots, line unit reduced (`line.md` 11.1) | yes (thread count, block) | 383k to 312k points bracket this | spec and model change |
+| E. Faster iteration: self-hosted runner or local LibreLane | no | removes the 6 h cap and returns artifacts of every run | setup, needs a machine |
