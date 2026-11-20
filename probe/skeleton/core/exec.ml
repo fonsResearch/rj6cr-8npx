@@ -44,7 +44,16 @@ let execute (ctx : ctx) (w : Signal.t W.t) id =
   let d = Dec.decode word in
   let is = d.is and f = d.f in
   let r = t.r in
-  let rr idx = mux idx r in
+  (* three read ports, as in the chip: the register index of each port is selected by the
+     one-hot instruction decode, then the register file is read once per port *)
+  let port name ops = mux (U.oh_mux ~width:3 (List.map ops ~f:(fun op -> is op, f op name))) r in
+  let p_a =
+    port "ra"
+      [ Alu; Bbit; Br; Bri; Crc; Iow; Jr; Ldx; Pdrm; Pinm; Pinr; Push; Stx; Taddr; Tperr; Tset; Shi; Shv ]
+  in
+  let p_b = port "rb" [ Alu; Br; Crc; Shv; Tset ] in
+  let p_d = port "rd" [ Alui; Crc; Djnz; Outs; Outsc; Ins; Insc ] in
+  let rp = function "ra" -> p_a | "rb" -> p_b | "rd" -> p_d | n -> failwith ("no read port for " ^ n) in
   let own16 = Core.owned_mask w id in
   let st = Core.status ctx w id in
   let pin_src op = mux2 (f op "src") (uresize t.cap 24) ctx.pv in
@@ -69,15 +78,15 @@ let execute (ctx : ctx) (w : Signal.t W.t) id =
   let s = s0 in
   let s = stage s ~en:(is Pinv) (f Pinv "p") (f Pinv "v") in
   let s = stage_dir s ~en:(is Pdir) (f Pdir "p") (f Pdir "d") in
-  let s = stage s ~en:(is Pinr) (f Pinr "p") (U.bit_at (rr (f Pinr "ra")) (f Pinr "bit")) in
-  let s = stage_mask s ~en:(is Pinm) (f Pinm "mask") (rr (f Pinm "ra")) in
-  let s = stage_dir_mask s ~en:(is Pdrm) (f Pdrm "mask") (select (rr (f Pdrm "ra")) 7 0) in
+  let s = stage s ~en:(is Pinr) (f Pinr "p") (U.bit_at (rp "ra") (f Pinr "bit")) in
+  let s = stage_mask s ~en:(is Pinm) (f Pinm "mask") (rp "ra") in
+  let s = stage_dir_mask s ~en:(is Pdrm) (f Pdrm "mask") (select (rp "ra") 7 0) in
   let pini_m = mux2 (f Pini "grp") (f Pini "mask" @: zero 8) (uresize (f Pini "mask") 16) in
   let pini_v = mux2 (f Pini "grp") (f Pini "val" @: zero 8) (uresize (f Pini "val") 16) in
   let s = stage_mask s ~en:(is Pini) pini_m pini_v in
   let s = stage_dir_mask s ~en:(is Pdri) (f Pdri "mask") (f Pdri "val") in
   let outs_bit op =
-    let v = rr (f op "rd") in
+    let v = rp "rd" in
     mux2 (f op "dir") (msb v) (lsb v)
   in
   let s = stage s ~en:(is Outs) (f Outs "p") (outs_bit Outs) in
@@ -86,24 +95,24 @@ let execute (ctx : ctx) (w : Signal.t W.t) id =
   let s = stage s ~en:(is Insc) (f Insc "cp") (f Insc "cv") in
   (* --- data memory --- *)
   let ea_ld = uresize (f Ld "addr") 16 and ea_st = uresize (f St "addr") 16 in
-  let ea_ldx = rr (f Ldx "ra") +: uresize (f Ldx "off") 16 in
-  let ea_stx = rr (f Stx "ra") +: uresize (f Stx "off") 16 in
+  let ea_ldx = rp "ra" +: uresize (f Ldx "off") 16 in
+  let ea_stx = rp "ra" +: uresize (f Stx "off") 16 in
   let mem_op = is Ld |: is Ldx |: is St |: is Stx in
   let ea = U.oh_mux ~width:16 [ is Ld, ea_ld; is Ldx, ea_ldx; is St, ea_st; is Stx, ea_stx ] in
   let in_win = uresize ea 17 <: uresize t.dsize 17 in
   (* --- register write --- *)
-  let shift_val op amt = shift (f op "kind") (rr (f op "ra")) amt in
+  let shift_val op amt = shift (f op "kind") (rp "ra") amt in
   let outs_shifted op =
-    let v = rr (f op "rd") in
+    let v = rp "rd" in
     mux2 (f op "dir") (sll v 1) (srl v 1)
   in
   let ins_val op =
     let b = U.bit_at (pin_src op) (f op "pin") in
-    let v = rr (f op "rd") in
+    let v = rp "rd" in
     mux2 (f op "dir") (select v 14 0 @: b) (b @: select v 15 1)
   in
   let pinrd = mux2 (f Pinrd "grp") (uresize (select (pin_src Pinrd) 23 16) 16) (select (pin_src Pinrd) 15 0) in
-  let djnz_v = rr (f Djnz "rd") -:. 1 in
+  let djnz_v = rp "rd" -:. 1 in
   let tget =
     mux (f Tget "sel")
       [ select ctx.e 15 0; select ctx.e 31 16; select t.t_int 15 0; select t.t_int 31 16; t.slack_min; select t.p 15 0
@@ -131,13 +140,13 @@ let execute (ctx : ctx) (w : Signal.t W.t) id =
   in
   let ior_bad = ~:(ior_addr ==:. 0) &: ~:ior_rule &: ~:ior_line in
   let regw =
-    [ is Alu, f Alu "rd", alu (f Alu "fn") (rr (f Alu "ra")) (rr (f Alu "rb"))
-    ; is Alui, f Alui "rd", alu (f Alui "fn") (rr (f Alui "rd")) (f Alui "imm")
+    [ is Alu, f Alu "rd", alu (f Alu "fn") (rp "ra") (rp "rb")
+    ; is Alui, f Alui "rd", alu (f Alui "fn") (rp "rd") (f Alui "imm")
     ; is Shi, f Shi "rd", shift_val Shi (f Shi "amt")
-    ; is Shv, f Shv "rd", shift_val Shv (select (rr (f Shv "rb")) 3 0)
+    ; is Shv, f Shv "rd", shift_val Shv (select (rp "rb") 3 0)
     ; ( is Crc
       , f Crc "rd"
-      , crc_step ~refl:(f Crc "refl") ~byte:(f Crc "byte") (rr (f Crc "rd")) (rr (f Crc "ra")) (rr (f Crc "rb")) )
+      , crc_step ~refl:(f Crc "refl") ~byte:(f Crc "byte") (rp "rd") (rp "ra") (rp "rb") )
     ; is Ld, f Ld "rd", ctx.data_dout
     ; is Ldx, f Ldx "rd", ctx.data_dout
     ; is Jal, f Jal "rd", uresize (t.pc +:. 1) 16
@@ -161,31 +170,31 @@ let execute (ctx : ctx) (w : Signal.t W.t) id =
   let jumps =
     [ is Jmp, tgt Jmp
     ; is Jal, tgt Jal
-    ; is Jr, select (rr (f Jr "ra")) 9 0
-    ; br Br (is Br &: cond (f Br "cond") (rr (f Br "ra")) (rr (f Br "rb")))
-    ; br Bri (is Bri &: cond (f Bri "cond") (rr (f Bri "ra")) (uresize (f Bri "imm") 16))
+    ; is Jr, select (rp "ra") 9 0
+    ; br Br (is Br &: cond (f Br "cond") (rp "ra") (rp "rb"))
+    ; br Bri (is Bri &: cond (f Bri "cond") (rp "ra") (uresize (f Bri "imm") 16))
     ; br Djnz (is Djnz &: (djnz_v <>:. 0))
-    ; br Bbit (is Bbit &: (U.bit_at (rr (f Bbit "ra")) (f Bbit "bit") ==: f Bbit "sense"))
+    ; br Bbit (is Bbit &: (U.bit_at (rp "ra") (f Bbit "bit") ==: f Bbit "sense"))
     ; br Bpin (is Bpin &: (U.bit_at (pin_src Bpin) (f Bpin "pin") ==: f Bpin "sense"))
     ; br Bst (is Bst &: (U.bit_at st (f Bst "bit") ==: f Bst "sense"))
     ]
   in
   let jump = U.any (List.map jumps ~f:fst) in
   let next_pc = mux2 jump (U.oh_mux ~width:10 jumps) (t.pc +:. 1) in
-  let jr_bad = is Jr &: (uresize (rr (f Jr "ra")) 16 >=: uresize t.psize 16) in
+  let jr_bad = is Jr &: (uresize (rp "ra") 16 >=: uresize t.psize 16) in
   (* --- time --- *)
   let t_int' =
     U.oh_mux ~width:32
       [ is Tnow, ctx.e +: uresize (f Tnow "imm") 32
       ; is Taddi, t.t_int +: uresize (f Taddi "imm") 32
-      ; is Taddr, t.t_int +: uresize (rr (f Taddr "ra")) 32
-      ; is Tset, rr (f Tset "ra") @: rr (f Tset "rb")
+      ; is Taddr, t.t_int +: uresize (rp "ra") 32
+      ; is Tset, rp "ra" @: rp "rb"
       ]
   in
   let t_int_ch = is Tnow |: is Taddi |: is Taddr |: is Tset in
   let t_int_n = mux2 t_int_ch t_int' t.t_int in
   let t_frac_n = mux2 (is Tnow |: is Tset) (zero 8) t.t_frac in
-  let per_v = mux2 (is Tperi) (f Tperi "imm") (rr (f Tperr "ra")) in
+  let per_v = mux2 (is Tperi) (f Tperi "imm") (rp "ra") in
   let per_half = mux2 (is Tperi) (f Tperi "half") (f Tperr "half") in
   let p_n =
     mux2 (is Tperi |: is Tperr)
@@ -205,7 +214,7 @@ let execute (ctx : ctx) (w : Signal.t W.t) id =
   let sync_block = ~:pcb &: d.legal &: Dec.is_sync d &: t.armed in
   let pre = ~:pcb &: d.legal &: ~:sync_block in
   let iow_addr = mux2 (is Iow) (f Iow "addr") (f Iowi "addr") in
-  let iow_v = mux2 (is Iow) (rr (f Iow "ra")) (f Iowi "imm") in
+  let iow_v = mux2 (is Iow) (rp "ra") (f Iowi "imm") in
   let iow = is Iow |: is Iowi in
   let line_ok_w, line_j_w = Lregs.line_io_index iow_addr in
   let iow_line = iow &: ~:(iow_addr ==:. 0) &: line_ok_w &: line_mine in
@@ -261,7 +270,7 @@ let execute (ctx : ctx) (w : Signal.t W.t) id =
           ; late = (t.late &: ~:(iow &: (iow_addr ==:. 0) &: bit iow_v 3)) |: is_late
           ; in_v = t.in_v &: ~:(is Pull)
           ; out_v = t.out_v |: is Push
-          ; out_d = mux2 (is Push) (rr (f Push "ra")) t.out_d
+          ; out_d = mux2 (is Push) (rp "ra") t.out_d
           }
         in
         let tm = d.tm in
