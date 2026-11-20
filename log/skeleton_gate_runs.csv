@@ -16,3 +16,8 @@ run_id,branch,netlist,local_area_um2,synth_strategy,pads_excluded,density_pct,fl
 44586255761,probe-skeleton-s308-d3,without rules+line+peek+trace,308260,AREA 0,yes,70,probe,312299,34.9,,,,,15613,3,ended with reports (DRT_OPT_ITERS 3); Metal4 violations over the data macro
 44621957176,probe-skeleton-s308-m4,without rules+line+peek+trace,308260,AREA 0,yes,70,probe + Metal4 routing obstruction over macros,312299,34.9,,,,,11004,3,ended with reports; nets still cross the data macro on Metal4
 44621963119,probe-skeleton-s434-m4,without rules,433674,AREA 0,yes,70,probe + Metal4 routing obstruction over macros,442618,49.3,80.30,107.47,36.43,44181,205743,2,cancelled in detailed routing at 6 h
+44702659086,probe-skeleton-s308-fpa,without rules+line+peek+trace,308260,AREA 0,yes,70,probe + soft placement blockage x<834.32 y<388.04,312299,,,,,,11729,3,ended with reports; 1817 over data macro; congestion detours (uo_out[2])
+44702662286,probe-skeleton-s373-fpa,without rules+line,373022,AREA 0,yes,70,probe + soft placement blockage,382856,50.1,78.40,90.09,36.61,10620,68387,3,ended with reports
+44702666086,probe-skeleton-s434-fpa,without rules,433674,AREA 0,yes,70,probe + soft placement blockage,442618,57.9,83.96,109.51,45.97,40341,100797,3,cancelled in detailed routing at 6 h
+44733314370,probe-skeleton-s308-d45,without rules+line+peek+trace,308260,AREA 0,yes,45,probe,312299,34.9,56.73,65.83,19.84,1862,12033,3,ended with reports
+44733309756,probe-skeleton-s308-fpa-d45,without rules+line+peek+trace,308260,AREA 0,yes,45,probe + soft placement blockage,312299,41.0,58.25,65.01,18.82,628,7930,3,ended with reports; 6 over macros; hotspot x1100-1300 y100-400 (a22oi mux tree)

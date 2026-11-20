@@ -1,4 +1,4 @@
-# Skeleton gate G1 (plan step 4), status 2026-11-20
+# Skeleton gate G1 (plan step 4), status 2026-11-20 (updated after floorplan A)
 
 Gate G1: detailed routing clean and slow-corner setup slack at least +1.0 ns at 20.83 ns.
 **Result so far: G1 fails.** No skeleton configuration has routed. The step is open; the options are
@@ -57,7 +57,7 @@ job log. Every run: `log/skeleton_gate_runs.csv`.
   56.7 % did not. The skeleton fails at 34.9 %: the failure is placement across the 336 um tall
   data macro, not only size [inference].
 
-## 5. Options (decision pending)
+## 5. Options (decided 2026-11-20: A first, then C, scope kept)
 
 The minimum configuration of the specification does not route on 8x4 in this floorplan, and its
 size alone (535k) is above every routed point.
@@ -69,3 +69,35 @@ size alone (535k) is above every routed point.
 | C. Chip RTL written for area (one register-file read path per port, one decoder, shared timing compare where legal), size measured before it is hardened | no | unknown until written; the skeleton's execute alone is about 86k um^2 of logic | RTL step first, gate after |
 | D. Scope: 2 threads, 2 rule slots, line unit reduced (`line.md` 11.1) | yes (thread count, block) | 383k to 312k points bracket this | spec and model change |
 | E. Faster iteration: self-hosted runner or local LibreLane | no | removes the 6 h cap and returns artifacts of every run | setup, needs a machine |
+
+## 6. Floorplan A [measured, 3 detailed-routing iterations each]
+
+Decision of 2026-11-20: fix the floorplan first and keep the scope. Results on the 312k point:
+
+| change from the probed floorplan (density 70) | util. | GRT overflow | DRT violations after 3 iterations | over the data macro |
+|---|---|---|---|---|
+| none | 34.9 % | | 15,613 | 3,624 |
+| Metal4 `ROUTING_OBSTRUCTIONS` over both macros | 34.9 % | | 11,004 | 2,668 |
+| soft placement blockage x < 834.32, y < 388.04 | 41.0 % | | 11,729 | 1,817 |
+| `PL_TARGET_DENSITY_PCT` 45 | 34.9 % | 1,862 | 12,033 | |
+| soft blockage and density 45 | 41.0 % | 628 | 7,930 | 6 |
+
+- Stacking both macros in one column is not possible: with full-height stripes, a stripe the data
+  macro needs removed is one the program macro needs bridged (planner check C1).
+- `FP_OBSTRUCTIONS` (hard) removes the placement rows under the macros, the PDN generator then draws
+  no stripe pieces there, and the stripe check C4 fails (24 pin boxes). The soft blockage keeps the
+  rows; 5 logic cells were placed in the band.
+- The crossings of the data macro were congestion detours, not placement: `uo_out[2]` (pin at
+  110.4, 710.1; driver at 998.4, 699.3) was routed down and across the macro on Metal4. With the
+  blockage and density 45 they are gone (6 violations over the macro).
+- What remains is one hotspot, x 1100-1300 um, y 100-400 um (about 6,000 of 7,930), that barely
+  moves between iterations (8,120, 8,113, 7,930). 157 of the 297 cells in its densest 100 um bin are
+  `a22oi_1`: an AND-OR multiplexer tree collecting inputs from the whole chip (the shared execute
+  stage's thread and register selection in this proxy).
+- At 383k and 443k the blockage raises utilisation to 50.1 % and 57.9 % and does not help
+  (68,387 and 100,797 violations).
+
+Floorplan settings carried forward: soft blockage around the macros and a placement density near the
+real utilisation. The remaining failure is the structure of the proxy netlist, which is option C:
+the chip RTL is written for area and wiring (narrow read paths, no chip-wide multiplexer trees) and
+is measured on this floorplan before G1 is retried.
