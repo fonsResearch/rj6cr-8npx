@@ -227,6 +227,13 @@ module Chip = struct
     ; line : 'a Line.t [@rtlprefix "line_"]
     ; th : 'a Thread.t list [@length 3] [@rtlmangle true]
     ; rules : 'a Rule.t list [@length 4] [@rtlmangle true]
+      (* the rule engine's inputs of the previous cycle (V3, v1.1); its EMIT is trace.em_* *)
+    ; ri_valid : 'a
+    ; ri_pp : 'a [@bits 24] (* pv_prev of the previous cycle *)
+    ; ri_peer : 'a [@bits 8] (* P0..P7: an edge is the peer's *)
+    ; ri_rise : 'a [@bits 16]
+    ; ri_fall : 'a [@bits 16]
+    ; ri_lev : 'a [@bits 11]
     }
   [@@deriving hardcaml]
 end

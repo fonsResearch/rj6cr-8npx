@@ -5,8 +5,10 @@ memories compared at the end; at most one user per memory port per cycle.
 
 ## Campaigns of 2026-11-21, specification v1.1
 
-Same scenarios, seeds and session counts as 2026-11-16, run on the v1.1 model and circuit at the commit
-that adds this section. Session lengths are set by the stimulus and are the same as for v1.0.
+Same scenarios, seeds and session counts as 2026-11-16. Session lengths are set by the stimulus and
+are the same as for v1.0. Run twice, with the same result: on v1.1 as first written (commit c1e61a5)
+and on v1.1 with V3 amended (the commit that adds this sentence; the comparison then also covers the
+registered rule engine inputs `ri_*`).
 
 | scenario | seed | sessions | cycles | mismatches | port conflicts | memory words differing |
 |---|---|---|---|---|---|---|

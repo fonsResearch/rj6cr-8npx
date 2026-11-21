@@ -19,14 +19,17 @@ let scenario name ~rule =
   then Model.set_rule chip 0 ~policy:1 ~min:12 ~start:(Model.sel 2 9) ~stop:(Model.sel 3 9) ();
   Model.start chip 0 ~pc:0;
   let th = chip.th.(0) in
-  let r = chip.rules.(0) in
   for _ = 1 to 30 do
     let n = chip.now in
     let pc = th.pc in
     let before = th.flight in
     let armed = th.armed and due = th.due and t_int = th.t_int in
     let pad = (Model.uo_out chip lsr 1) land 1 in
-    let active = r.active and cnt = r.cnt in
+    (* the rule state the commit check of this cycle uses: the registers after the automaton's
+       step of the previous cycle (V3, v1.1) *)
+    let fw = Model.copy_chip chip in
+    Model.rules_step fw;
+    let active = fw.rules.(0).active and cnt = fw.rules.(0).cnt in
     let state =
       match th.state with
       | Idle -> "idle"

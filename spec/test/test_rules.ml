@@ -203,3 +203,26 @@ let%expect_test "rule measurements are readable by a thread" =
   Printf.printf "r0=%d r1=%d r2=%d %s\n" chip.th.(0).r.(0) chip.th.(0).r.(1) chip.th.(0).r.(2) (state_name chip.th.(0));
   [%expect {| r0=25 r1=25 r2=0 halted |}]
 ;;
+
+(* V3 (v1.1): the automaton takes the step of cycle n in cycle n + 1. A violation found for
+   cycle n is recorded during cycle n + 1 with cycle n as its time, and with fail-stop the owner
+   faults at the end of cycle n + 1. *)
+let%expect_test "an automaton verdict is recorded and acted on in the cycle after its event" =
+  let chip = setup "WAITP rise, 19, 0, 0, 1, 0\nTADDI 50\nPINV 1, 9 @at\nHALT\n" in
+  Model.set_rule chip 0 ~policy:2 ~owner:0 ~max:30 ~start:(w_rise 19) ~stop:(c_rise 9) ();
+  for _ = 1 to 200 do
+    let n = chip.Model.now in
+    if n >= 71 && n <= 75
+    then
+      Printf.printf "start of cycle %d: first fail %s; thread 0 %s\n" n (verdict chip.first_fail)
+        (state_name chip.th.(0));
+    Model.step chip ~pad:(if n >= 40 then 1 lsl 19 else 0)
+  done;
+  [%expect {|
+    start of cycle 71: first fail none; thread 0 run
+    start of cycle 72: first fail none; thread 0 run
+    start of cycle 73: first fail none; thread 0 run
+    start of cycle 74: first fail rule 0 max at cycle 72; thread 0 fault RULE 0
+    start of cycle 75: first fail rule 0 max at cycle 72; thread 0 fault RULE 0
+    |}]
+;;

@@ -51,6 +51,16 @@ V3. The rule check of a commit is unchanged: a commit in cycle n is decided from
     enforcement proof rests on; the chip meets it by registering the events and forwarding the part
     of the next rule state the check needs (active, count below the minimum), not by changing it.
 
+    Amended 2026-11-21 (user decision, section 5): the automaton runs one cycle behind its events.
+    The events of cycle n, with the peer qualification of wire edges as it is in cycle n, are
+    registered; in cycle n+1 the automaton takes the step of cycle n on them, with the rule
+    configuration as it is at the start of cycle n+1. Its verdicts carry cycle n, are recorded in
+    cycle n+1 and come first in that cycle's merge (they belong to an earlier cycle than any other
+    candidate). A fail-stop it finds faults the owner at the end of cycle n+1, unless the thread
+    faulted or stopped on its own in that cycle. The rule check of a commit uses the state after
+    that step (forwarded); reads of rule registers by a thread (IOR) or the host return the
+    registers at the start of the cycle, which is the state after the step of cycle n-1.
+
 V4. The line unit is pipelined inside: its outputs (pins, symbols, verdicts, memory writes, status)
     follow its inputs by a fixed number of cycles, defined in `line.md` v1.1 from the measured depth
     of its stages. The number is the same for every output so that the unit's internal timing is
@@ -67,6 +77,8 @@ V4. The line unit is pipelined inside: its outputs (pins, symbols, verdicts, mem
 | trace freeze on a verdict | same cycle | next cycle |
 | host register read | after every block's update of the cycle | start of the cycle |
 | rule check of a commit (V3) | rule state after cycle n-1 | unchanged |
+| automaton verdict and RULE fault for an event of cycle n (V3 amended) | recorded, and the owner faults, in cycle n | in cycle n+1; the verdict still carries cycle n |
+| rule registers read by IOR or the host | state after the events of cycle n-1 | after the events of cycle n-2 |
 | deadline exactness, pad edge cycle, commit order on a thread's own pins | | unchanged |
 | line unit outputs (V4) | | later by the pipeline depth |
 
@@ -80,3 +92,12 @@ V4. The line unit is pipelined inside: its outputs (pins, symbols, verdicts, mem
 4. Tests whose expectations depend on same-cycle visibility are re-derived from the documents, not
    from the new model's output.
 5. Depth analysis re-run on the v1.1 circuit; the line unit's pipeline depth for V4 measured.
+
+## 5. Amendment of V3, 2026-11-21
+
+With the line unit registered (V4), the deepest chain of v1.1 as first written was 148 levels
+(about 22 ns at the slow corner, estimate; budget about 130): commit decision, EMIT code, the rule
+automaton, a violation, the RULE fault of the owner, all in one cycle (`log/depth_v1_1.md`). The user
+chose to run the automaton one cycle behind its events (V3 above) over a speculative chip structure
+and over signing this path off at the typical corner only. After the change the chain through the
+automaton is gone; the deepest chain is a thread's own timing and execute (`log/depth_v1_1.md`).

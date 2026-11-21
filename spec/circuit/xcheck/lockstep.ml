@@ -106,7 +106,11 @@ let project (c : Model.chip) : int S.Chip.t =
       ; em_c = (match c.cyc_emits_prev with (_, k) :: _ -> k | [] -> 0) }
   ; line
   ; th = Array.to_list (Array.map (project_thread c) c.th)
-  ; rules = Array.to_list (Array.map project_rule c.rules) }
+  ; rules = Array.to_list (Array.map project_rule c.rules)
+  ; ri_valid = b c.ri.ri_valid
+    (* the circuit keeps the pins of two cycles back; the model the edges between them *)
+  ; ri_pp = c.pv_prev land lnot c.ri.ri_wrise lor c.ri.ri_wfall
+  ; ri_peer = c.ri.ri_peer land 0xFF; ri_rise = c.ri.ri_rise; ri_fall = c.ri.ri_fall; ri_lev = c.ri.ri_lev }
 ;;
 
 type t =

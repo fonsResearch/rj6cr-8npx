@@ -95,9 +95,11 @@ that remain inside one cycle:
 1. Inside a thread: its timing decides whether its commit fires and moves `t`; its execute computes
    with that `t` (TADDI, TADDR, the slack of a timed instruction). Path: rule comparators, the fire
    decision, a 40-bit add, a 32-bit subtract and compare.
-2. Commit edges, wire edges, EMIT codes and line unit symbols of the cycle into the rule engine
-   (`rules.md`, V3). The chip registers the events and forwards the part of the next rule state the
-   commit check needs.
+2. The rule engine's step (`Rules.rules_step`) runs at the start of the cycle on the registered
+   events of the previous cycle (`ri_*`, and `trace.em_*` for EMIT), V3 as amended; its result is
+   what the commit checks of the line unit and the threads read (forwarding). The faults it finds are
+   applied after the threads (`Rules.rule_faults`), and the events of this cycle are registered at the
+   v1.0 place of the rule engine (`Rules.capture`).
 3. The pad merge: commits on own pins, the line unit's override, the safe pattern (V2).
 4. The verdict merge: candidates of the line unit, threads 0 to 2 and the rule engine, first wins (V2).
 5. Inside the line unit, its whole bit-level pipeline (V4, open).

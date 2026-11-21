@@ -4,6 +4,7 @@
 | thread (each of 3) | 496 |
 | rule slot (each of 4) | 140 |
 | verdicts (fail, blame, order) | 73 |
+| rule engine inputs of the previous cycle (V3) | 76 |
 | pins: now, values, directions, owners, safe pattern, synchronisers, filters, history | 360 |
 | host port and status | 206 |
 | trace | 151 |
@@ -12,4 +13,4 @@
 | line unit: transmitter | 145 |
 | line unit: receiver | 132 |
 | line unit: other | 5 |
-| **total** | 3530 |
+| **total** | 3606 |

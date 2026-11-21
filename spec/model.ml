@@ -200,6 +200,24 @@ type line =
   ; mutable r_err : int (* [0] stuffing violated, [1] a word was lost *)
   }
 
+(* The rule engine's inputs of one cycle, registered for the next (V3, v1.1). *)
+type rule_in =
+  { ri_valid : bool (* false in the first cycle after reset *)
+  ; ri_n : int (* the cycle the events belong to *)
+  ; ri_wrise : int (* wire edges P0..P23 *)
+  ; ri_wfall : int
+  ; ri_peer : int (* the pins whose edges are the peer's, at that cycle *)
+  ; ri_rise : int (* commit edges P0..P15 *)
+  ; ri_fall : int
+  ; ri_emits : (int * int) list (* EMITs: (thread, code) *)
+  ; ri_lev : int (* line unit symbol events *)
+  }
+
+let ri_none =
+  { ri_valid = false; ri_n = 0; ri_wrise = 0; ri_wfall = 0; ri_peer = 0; ri_rise = 0; ri_fall = 0
+  ; ri_emits = []; ri_lev = 0 }
+;;
+
 type chip =
   { mutable now : int
   ; prog : int array
@@ -229,6 +247,8 @@ type chip =
   ; mutable ev_fall : int
   ; mutable cyc_emits : (int * int) list (* EMITs executed in the current cycle *)
   ; mutable cyc_emits_prev : (int * int) list (* EMITs of the previous cycle, as the trace sees them *)
+  ; mutable ri : rule_in (* the rule engine's inputs of the previous cycle (V3, v1.1) *)
+  ; mutable ri_faults : (int * int) list (* (rule, owner) faults found by this cycle's rule step *)
   ; mutable hstat : int (* host status flags *)
   ; mutable now_latch : int
   ; host : host
@@ -283,7 +303,7 @@ let create ?(fifo_depth = 1) ?(n_rules = 4) () =
   ; safe_val = 0; safe_dir = 0; filt = Array.make 24 0; x = 0; s = 0; fcnt = Array.make 24 0
   ; pv_prev = 0; emits = []; fifo_depth; rules = Array.init n_rules (fun _ -> new_rule ())
   ; first_fail = None; first_blame = None; blame_before_fail = false; oe_hist = Array.make 8 0
-  ; ev_rise = 0; ev_fall = 0; cyc_emits = []; cyc_emits_prev = []; hstat = 0; now_latch = 0
+  ; ev_rise = 0; ev_fall = 0; cyc_emits = []; cyc_emits_prev = []; ri = ri_none; ri_faults = []; hstat = 0; now_latch = 0
   ; host = { count = 0; sh = 0; cmd = 0; haddr = 0; osh = 0; miso = 0; rbuf = 0; rpend = None; req = None }
   ; tr_en = false; tr_freeze = false; tr_base = 0; tr_size = 0; tr_mask = 0; tr_post = 4; tr_ptr = 0
   ; tr_wrapped = false; tr_frozen = false; tr_trig = false; tr_left = 0; tr_rec = Array.make 4 0
@@ -867,9 +887,9 @@ let timing ?view chip th ~n ~pv ~pv_prev =
   | _ -> ()
 ;;
 
-(* Rule engine, end of cycle n: every enabled rule sees the events of this cycle. *)
-let rules_update chip ~n ~pv ~pv_prev =
-  let wire_rise = pv land lnot pv_prev and wire_fall = pv_prev land lnot pv in
+(* Rule engine inputs, at the end of cycle n: the events of this cycle. They are registered and
+   the automaton processes them in cycle n + 1 (V3, v1.1). *)
+let rule_inputs chip ~n ~pv ~pv_prev =
   (* An edge read on a bidirectional pin is the peer's iff our driver was off throughout a
      window around the two samples it lies between (one cycle of margin on each side for
      pad delay); P16..P23 are always the peer's, P8..P15 always ours. *)
@@ -882,61 +902,86 @@ let rules_update chip ~n ~pv ~pv_prev =
       let f = chip.filt.(pin) in
       List.for_all (fun k -> (chip.oe_hist.(k + f) lsr pin) land 1 = 0) [ 1; 2; 3; 4 ])
   in
-  let event (r : rule) s =
-    match decode_sel s with
-    | Some (((0 | 1) as c), q, pin) ->
-      ((if c = 0 then wire_rise else wire_fall) lsr pin) land 1 = 1
-      && (q = 0 || (q = 1) = peer pin)
-    | Some (2, _, pin) -> (chip.ev_rise lsr pin) land 1 = 1
-    | Some (3, _, pin) -> (chip.ev_fall lsr pin) land 1 = 1
-    | Some (5, _, code) -> r.owner <= 2 && List.mem (r.owner, code) chip.cyc_emits
-    | Some (6, _, k) -> (chip.line.l_ev lsr k) land 1 = 1
-    | _ -> false
-  in
-  let unit_mask (r : rule) = (1 lsl (4 * r.ps)) - 1 in
-  let violations = ref [] in
-  Array.iteri
-    (fun k r ->
-      if not r.en
-      then r.active <- false
-      else begin
-        let tick = if n land unit_mask r = unit_mask r then 1 else 0 in
-        let start_ev = event r r.sel_start and stop_ev = event r r.sel_stop and abort_ev = event r r.sel_abort in
-        if r.active
-        then
-          if abort_ev
-          then r.active <- false
-          else if r.cnt > r.rmax
+  let pm = ref 0 in
+  for q = 0 to 23 do if peer q then pm := !pm lor (1 lsl q) done;
+  { ri_valid = true; ri_n = n; ri_wrise = pv land lnot pv_prev; ri_wfall = pv_prev land lnot pv
+  ; ri_peer = !pm; ri_rise = chip.ev_rise; ri_fall = chip.ev_fall; ri_emits = chip.cyc_emits
+  ; ri_lev = chip.line.l_ev }
+;;
+
+(* Rule engine, start of cycle n + 1: every enabled rule takes the step of cycle n on the
+   registered events of cycle n and the rule configuration as it is now. Its verdicts carry
+   cycle n; the faults it finds land at the end of this cycle ([rule_faults]). *)
+let rules_step chip =
+  let ri = chip.ri in
+  chip.ri_faults <- [];
+  if ri.ri_valid
+  then begin
+    let n = ri.ri_n in
+    let event (r : rule) s =
+      match decode_sel s with
+      | Some (((0 | 1) as c), q, pin) ->
+        ((if c = 0 then ri.ri_wrise else ri.ri_wfall) lsr pin) land 1 = 1
+        && (q = 0 || (q = 1) = ((ri.ri_peer lsr pin) land 1 = 1))
+      | Some (2, _, pin) -> (ri.ri_rise lsr pin) land 1 = 1
+      | Some (3, _, pin) -> (ri.ri_fall lsr pin) land 1 = 1
+      | Some (5, _, code) -> r.owner <= 2 && List.mem (r.owner, code) ri.ri_emits
+      | Some (6, _, k) -> (ri.ri_lev lsr k) land 1 = 1
+      | _ -> false
+    in
+    let unit_mask (r : rule) = (1 lsl (4 * r.ps)) - 1 in
+    let violations = ref [] in
+    Array.iteri
+      (fun k r ->
+        if not r.en
+        then r.active <- false
+        else begin
+          let tick = if n land unit_mask r = unit_mask r then 1 else 0 in
+          let start_ev = event r r.sel_start and stop_ev = event r r.sel_stop and abort_ev = event r r.sel_abort in
+          if r.active
+          then
+            if abort_ev
+            then r.active <- false
+            else if r.cnt > r.rmax
+            then begin
+              violations := (k, true) :: !violations;
+              r.active <- false
+            end
+            else if stop_ev
+            then begin
+              if r.cnt < r.rmin then violations := (k, false) :: !violations;
+              r.obs_min <- min r.obs_min r.cnt;
+              r.obs_max <- max r.obs_max r.cnt;
+              r.active <- false
+            end
+            else r.cnt <- min 0xFFFF (r.cnt + tick);
+          if (not r.active) && start_ev
           then begin
-            violations := (k, true) :: !violations;
-            r.active <- false
+            r.active <- true;
+            r.cnt <- tick
           end
-          else if stop_ev
-          then begin
-            if r.cnt < r.rmin then violations := (k, false) :: !violations;
-            r.obs_min <- min r.obs_min r.cnt;
-            r.obs_max <- max r.obs_max r.cnt;
-            r.active <- false
-          end
-          else r.cnt <- min 0xFFFF (r.cnt + tick);
-        if (not r.active) && start_ev
-        then begin
-          r.active <- true;
-          r.cnt <- tick
-        end
-      end)
-    chip.rules;
+        end)
+      chip.rules;
+    List.iter
+      (fun (k, max_kind) ->
+        record chip ~n k ~max_kind;
+        let r = chip.rules.(k) in
+        if r.policy = 2 && r.owner <= 2 then chip.ri_faults <- (k, r.owner) :: chip.ri_faults)
+      (List.rev !violations);
+    chip.ri_faults <- List.rev chip.ri_faults
+  end
+;;
+
+(* The faults of this cycle's rule step, after the threads' own update: a thread that faulted or
+   stopped on its own in this cycle keeps that. *)
+let rule_faults chip =
   List.iter
-    (fun (k, max_kind) ->
-      record chip ~n k ~max_kind;
-      let r = chip.rules.(k) in
-      if r.policy = 2 && r.owner <= 2
-      then (
-        let th = chip.th.(r.owner) in
-        match th.state with
-        | Faulted _ | Idle -> ()
-        | _ -> enter_fault chip th (Rule k)))
-    (List.rev !violations)
+    (fun (k, o) ->
+      let th = chip.th.(o) in
+      match th.state with
+      | Faulted _ | Idle -> ()
+      | _ -> enter_fault chip th (Rule k))
+    chip.ri_faults
 ;;
 
 (* --- host port: registers, loader, SPI (doc/spec/host.md) --- *)
@@ -1905,6 +1950,8 @@ let step chip ~pad =
   chip.x <- pad land 0xFF00FF;
   (* v1.1: every block reads the other blocks' registers as they are now *)
   let view = copy_chip chip in
+  (* V3: the rule step of the previous cycle; its verdicts come first in this cycle's merge *)
+  rules_step chip;
   let pv = pins chip in
   let pv_prev = chip.pv_prev in
   chip.value_n <- chip.value;
@@ -1942,7 +1989,8 @@ let step chip ~pad =
      let m8 = l.l_mask land 0xFF in
      chip.dir_n <- chip.dir_n land lnot m8 lor (l.l_dir land m8)
    end);
-  rules_update chip ~n ~pv ~pv_prev;
+  rule_faults chip;
+  chip.ri <- rule_inputs chip ~n ~pv ~pv_prev;
   let host_uses_slot =
     match chip.host.req with Some (false, _, _, _) -> n land 3 = 1 && not line_uses_slot | _ -> false
   in

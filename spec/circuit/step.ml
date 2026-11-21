@@ -98,6 +98,8 @@ let step (s : Signal.t Chip.t) ~pad ~prog_dout ~data_dout =
   let t0 = Tmp.map Tmp.port_names_and_widths ~f:(fun (_, wd) -> zero wd) in
   let t0 = { t0 with value_n = c.value; dir_n = c.dir } in
   let w = { W.c; t = t0 } in
+  (* V3: the rule step of the previous cycle; its verdicts come first in this cycle's merge *)
+  let w, rule_fault = Rules.rules_step ctx w in
   let w = Linep.line_cycle ctx w in
   let w =
     List.fold (List.range 0 3) ~init:w ~f:(fun w id ->
@@ -143,7 +145,8 @@ let step (s : Signal.t Chip.t) ~pad ~prog_dout ~data_dout =
       ; dir_n = x.dir_n &: ~:m8 |: (x.l_dir &: m8)
       })
   in
-  let w = Rules.rules_update ctx w in
+  let w = Rules.rule_faults rule_fault w in
+  let w = Rules.capture ctx w in
   let h = w.c.host in
   let host_uses = h.rq_v &: ~:(h.rq_prog) &: (slot ==:. 1) &: ~:(w.t.l_slot) in
   (* the host's writes land after every other block's own update (v1.1 V2.4): trace first *)

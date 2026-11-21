@@ -12,6 +12,14 @@ v1.0 (V2). What changes is who sees the result when: threads (status bits), the 
 host (registers 0x20 to 0x26, rule registers) see a verdict or a rule register from the cycle after it
 was recorded.
 
+The automaton runs one cycle behind its events (V3 as amended): the events of cycle n are registered,
+and in cycle n+1 the automaton takes the step of cycle n on them with the rule configuration of the
+start of cycle n+1. A violation it finds is recorded in cycle n+1 with cycle n as its time, first in
+that cycle's merge; with fail-stop the owner faults at the end of cycle n+1 (the fault of section 7 that
+blocking causes is unchanged: it is decided by the thread in the cycle of the blocked commit). The
+blocking decision of cycle n+1 uses the state after that step. IOR and host reads of a rule register
+return its value at the start of the cycle, which is the state after the step of the cycle before.
+
 ## 1. What a rule is
 
 A rule watches one interval: from a start event to a stop event, optionally cancelled by an abort event,

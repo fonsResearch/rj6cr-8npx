@@ -74,4 +74,5 @@ to the table below with the reason.
 
 | date | change | reason | commit |
 |---|---|---|---|
-| 2026-11-21 | v1.1: registered block boundaries; reads of other blocks' registers at the start of the cycle, EMIT seen by the trace one cycle later, trace before host (`spec_v1_1.md`) | the v1.0 single-cycle chain through all blocks is about 79 ns at the slow corner (estimate); the clock is 20.83 ns | this commit |
+| 2026-11-21 | v1.1: registered block boundaries; reads of other blocks' registers at the start of the cycle, EMIT seen by the trace one cycle later, trace before host (`spec_v1_1.md`) | the v1.0 single-cycle chain through all blocks is about 79 ns at the slow corner (estimate); the clock is 20.83 ns | c1e61a5 |
+| 2026-11-21 | v1.1, V3 amended: the rule automaton runs one cycle behind its events; its verdicts (stamped with the event cycle) and RULE faults land in the next cycle; commit check unchanged (`spec_v1_1.md` 5) | with the line unit registered, the event, automaton, owner fault chain was 148 levels, about 22 ns at the slow corner (estimate) | this commit |

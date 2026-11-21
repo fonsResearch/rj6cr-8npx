@@ -9,12 +9,12 @@ open W
 let owned_mask (w : Signal.t W.t) id = concat_lsb (List.map w.c.owner ~f:(fun o -> o ==:. id))
 
 (* record: rule k (static) has a violation of the given kind in this cycle *)
-let record (ctx : ctx) (w : Signal.t W.t) k ~max_kind =
+let record ?cycle (ctx : ctx) (w : Signal.t W.t) k ~max_kind =
   let r = rule w k in
   let r = { r with v_max = r.v_max |: max_kind; v_min = r.v_min |: ~:max_kind } in
   let w = set_rule w k r in
   let c = w.c in
-  let v = { Verdict.valid = vdd; rule = U.k 2 k; max_kind; cycle = ctx.n } in
+  let v = { Verdict.valid = vdd; rule = U.k 2 k; max_kind; cycle = Option.value cycle ~default:ctx.n } in
   let set_fail = r.guarantee &: ~:(c.fail.valid) in
   let set_blame = ~:(r.guarantee) &: ~:(c.blame.valid) in
   { w with

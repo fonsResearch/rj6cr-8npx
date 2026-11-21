@@ -197,7 +197,8 @@ least 12 cycles after the cycle in which the event commit became visible; with `
 
 A faulting instruction has no other effect. The thread stops with `pc` at that instruction. Whatever
 was staged or pending is replaced by the safe pattern of all its pins as a pending commit, due at once:
-the pins hold the safe pattern from cycle e + 1, or later if a rule blocks that commit. HALT stops the
+the pins hold the safe pattern from cycle e + 1, or later if a rule blocks that commit. (For a RULE
+fault found by the automaton, e is the cycle after the event that violated the rule: `rules.md`.) HALT stops the
 thread and leaves its pins as they are.
 
 ## 10. Instruction semantics
