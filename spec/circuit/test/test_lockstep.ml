@@ -22,7 +22,7 @@ let%expect_test "rules and trace" =
   Campaign.scenario ~name:"rules" ~seed:2 ~runs:2 { rules = true; trace = true; line = false; fuzz = false; frames = false; directed = false; run = 30 };
   [%expect {|
     rules: 2 runs, 120679 cycles, 0 mismatches, 0 port conflicts, 0 memory words differ
-      coverage: fault DBOUND 3, fault ILLEGAL 2, fault IOPERM 3, fault PINOWN 2, fault TRAP 57 1, fetch 4041, pad change 19, trace record 1883, wait cycle 6114
+      coverage: fault DBOUND 3, fault ILLEGAL 2, fault IOPERM 3, fault PINOWN 2, fault TRAP 57 1, fetch 4041, pad change 19, trace record 1882, wait cycle 6114
       ops fetched: 26 of 48 kinds; not fetched: NOP SHV ST JMP JAL BBIT HALT PDRM PDRI INS PINRD TNOW TADDI TADDR TPERI TPERR TGET TSET PUSH EMIT IOR IOW
     |}]
 ;;
@@ -31,7 +31,7 @@ let%expect_test "line unit" =
   Campaign.scenario ~name:"line" ~seed:3 ~runs:2 { rules = true; trace = true; line = false; fuzz = false; frames = true; directed = false; run = 40 };
   [%expect {|
     line: 2 runs, 173993 cycles, 0 mismatches, 0 port conflicts, 0 memory words differ
-      coverage: blame verdict 1, fail verdict 1, fault IOPERM 13, fault PINOWN 9, fetch 15772, line drives 2750, line rx bit 156, line rx crc bad 11, line rx end 11, line rx start 11, line rx stuff error 477, line tx begin 6, line tx bit 409, line tx end 5, pad change 438, trace record 2005
+      coverage: blame verdict 1, fail verdict 1, fault IOPERM 13, fault PINOWN 9, fetch 15772, line drives 2750, line rx bit 156, line rx crc bad 11, line rx end 11, line rx start 11, line rx stuff error 477, line tx begin 6, line tx bit 409, line tx end 5, pad change 438, trace record 2004
       ops fetched: 15 of 48 kinds; not fetched: NOP ALU SHI SHV CRC ST STX JAL BR BRI DJNZ BBIT BPIN BST HALT TRAP PINV PDRI OUTSC INSC PINRD TNOW TADDI TADDR TPERI TPERR TGET TSET WAITP WAITS PULL EMIT IOW
     |}]
 ;;

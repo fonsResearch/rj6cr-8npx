@@ -48,6 +48,7 @@ type ctx =
   ; pv_prev : Signal.t
   ; oe0 : Signal.t (* uio_oe during this cycle *)
   ; snap : Signal.t Line.t (* the line unit at the start of the cycle *)
+  ; s0 : Signal.t Chip.t (* every register at the start of the cycle: what a block reads of the others (v1.1) *)
   ; prog_dout : Signal.t
   ; data_dout : Signal.t
   }

@@ -1,7 +1,14 @@
 # Host port and loader
 
-Version 1.0, frozen 2026-11-16 (`doc/decisions/spec_freeze.md`). Executable form: `spec/model.ml` (`host_cycle`, `reg_peek`,
+Version 1.1 of 2026-11-21: registered block boundaries (`doc/decisions/spec_v1_1.md`); version 1.0
+frozen 2026-11-16 (`doc/decisions/spec_freeze.md`). Executable form: `spec/model.ml` (`host_cycle`, `reg_peek`,
 `reg_write`, `prog_write`); examples in `spec/test/test_host.ml`. Read `machine.md` first.
+
+**Visibility (v1.1).** The host port is a block (`spec_v1_1.md`, V1): a register read returns the value
+the register has at the start of the cycle in which the read is taken, and the conditions of a write
+(the thread running or armed, the mailbox full, the program window running) are evaluated on the state
+at the start of the cycle. The host's writes are applied after every other block's own update of the
+cycle (V2), so a write wins over a block's update of the same register in the same cycle, as in v1.0.
 
 ## 1. Pins and sampling
 

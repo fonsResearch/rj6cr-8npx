@@ -6,10 +6,10 @@
 | verdicts (fail, blame, order) | 73 |
 | pins: now, values, directions, owners, safe pattern, synchronisers, filters, history | 360 |
 | host port and status | 206 |
-| trace | 140 |
+| trace | 151 |
 | line unit: configuration and owner | 274 |
 | line unit: response rules | 136 |
 | line unit: transmitter | 145 |
 | line unit: receiver | 132 |
 | line unit: other | 5 |
-| **total** | 3519 |
+| **total** | 3530 |

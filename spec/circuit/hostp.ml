@@ -13,7 +13,7 @@ let crc16_word crc word =
 ;;
 
 (* a write to the program memory (model: prog_write); [addr] 16 bits *)
-let prog_write (w : Signal.t W.t) ~en addr word =
+let prog_write (ctx : ctx) (w : Signal.t W.t) ~en addr word =
   let a = select addr 8 0 in
   let a11 = uresize a 11 in
   let hits =
@@ -21,8 +21,8 @@ let prog_write (w : Signal.t W.t) ~en addr word =
   in
   let refuse =
     U.any
-      (List.map2_exn hits w.c.th ~f:(fun h t ->
-         h &: (running t |: (t.loading &: (a11 <>: uresize t.pbase 11 +: uresize t.load_count 11)))))
+      (List.map3_exn hits w.c.th ctx.s0.th ~f:(fun h t t0 ->
+         h &: (running t0 |: (t.loading &: (a11 <>: uresize t.pbase 11 +: uresize t.load_count 11)))))
   in
   let w = hflag w ~en:(en &: refuse) 2 in
   let ok = en &: ~:refuse in
@@ -37,9 +37,9 @@ let prog_write (w : Signal.t W.t) ~en addr word =
       }))
 ;;
 
-let do_start (w : Signal.t W.t) ~en id =
-  let t = th w id in
-  let ok = t.loaded &: ~:(running t) &: ~:(t.armed) &: (uresize t.dbase 12 +: uresize t.dsize 12 <=:. 1024) in
+let do_start (ctx : ctx) (w : Signal.t W.t) ~en id =
+  let t = th w id and t0 = U.nth ctx.s0.th id in
+  let ok = t.loaded &: ~:(running t0) &: ~:(t0.armed) &: (uresize t.dbase 12 +: uresize t.dsize 12 <=:. 1024) in
   let w = hflag w ~en:(en &: ~:ok) 2 in
   map_th w id (fun t ->
     Thread.map2 t
@@ -58,8 +58,8 @@ let do_start (w : Signal.t W.t) ~en id =
       ~f:(U.upd (en &: ok)))
 ;;
 
-let reg_peek (ctx : ctx) (w : Signal.t W.t) addr =
-  let c = w.c in
+let reg_peek (ctx : ctx) (_ : Signal.t W.t) addr =
+  let c = ctx.s0 in
   let owners kk =
     concat_lsb (List.init 4 ~f:(fun j -> uresize (U.nth c.owner ((4 * kk) + j)) 4))
   in
@@ -132,15 +132,15 @@ let reg_peek (ctx : ctx) (w : Signal.t W.t) addr =
   mux addr table
 ;;
 
-let reg_read_done (w : Signal.t W.t) ~en addr =
+let reg_read_done (ctx : ctx) (w : Signal.t W.t) ~en addr =
   List.fold (List.range 0 3) ~init:w ~f:(fun w id ->
     let hit = en &: (addr ==:. 0x40 + (16 * id) + 9) in
-    let t = th w id in
+    let t = U.nth ctx.s0.th id in
     let w = hflag w ~en:(hit &: ~:(t.out_v)) 4 in
     map_th w id (fun t -> { t with out_v = U.upd hit t.out_v gnd }))
 ;;
 
-let reg_write (w : Signal.t W.t) ~en addr v =
+let reg_write (ctx : ctx) (w : Signal.t W.t) ~en addr v =
   let at a = en &: (addr ==:. a) in
   let c = w.c in
   let c = { c with hstat = U.upd (at 0x04) c.hstat (c.hstat &: ~:(select v 4 0)) } in
@@ -201,12 +201,12 @@ let reg_write (w : Signal.t W.t) ~en addr v =
   let w =
     List.fold (List.range 0 3) ~init:w ~f:(fun w id ->
       let a j = at (0x40 + (16 * id) + j) in
-      let t = th w id in
-      let run = running t in
+      let t = th w id and t0 = U.nth ctx.s0.th id in
+      let run = running t0 in
       (* register 0: commands *)
       let cmd = a 0 in
-      let w = do_start w ~en:(cmd &: (v ==:. 1)) id in
-      let stop = cmd &: (v ==:. 2) &: ~:(t.st ==:. 0) in
+      let w = do_start ctx w ~en:(cmd &: (v ==:. 1)) id in
+      let stop = cmd &: (v ==:. 2) &: ~:(t0.st ==:. 0) in
       let w = w_if stop w (fun w -> map_th (Core.enter_fault w id ~code:1 ~arg:(zero 8)) id (fun t -> { t with st = U.k 3 0 })) in
       let load_ok = ~:run &: (t.psize >=:. 1) &: (uresize t.pbase 11 +: uresize t.psize 11 <=:. 512) in
       let ld = cmd &: (v ==:. 3) in
@@ -239,10 +239,10 @@ let reg_write (w : Signal.t W.t) ~en addr v =
           ; strict = U.upd (a 7) t.strict (lsb v)
           })
       in
-      (* mailbox to the thread *)
-      let t = th w id in
-      let w = hflag w ~en:(a 8 &: t.in_v) 3 in
-      let w = map_th w id (fun t -> { t with in_v = U.upd (a 8) t.in_v vdd; in_d = U.upd (a 8 &: ~:(t.in_v)) t.in_d v }) in
+      (* mailbox to the thread: full or not as at the start of the cycle *)
+      let full0 = t0.in_v in
+      let w = hflag w ~en:(a 8 &: full0) 3 in
+      let w = map_th w id (fun t -> { t with in_v = U.upd (a 8) t.in_v vdd; in_d = U.upd (a 8 &: ~:full0) t.in_d v }) in
       (* end of a load *)
       let t = th w id in
       let good = a 13 &: t.loading &: (uresize t.load_count 16 ==: uresize t.psize 16) &: (t.crc ==: v) in
@@ -304,7 +304,7 @@ let host_cycle (ctx : ctx) (w : Signal.t W.t) ~slot_free =
   let service = h.rq_v &: ((h.rq_prog &: (slot ==:. 3)) |: (~:(h.rq_prog) &: (slot ==:. 1) &: slot_free)) in
   let pw = service &: h.rq_prog &: h.rq_write and pr = service &: h.rq_prog &: ~:(h.rq_write) in
   let dw = service &: ~:(h.rq_prog) &: h.rq_write and dr = service &: ~:(h.rq_prog) &: ~:(h.rq_write) in
-  let w = prog_write w ~en:pw h.rq_addr h.rq_data in
+  let w = prog_write ctx w ~en:pw h.rq_addr h.rq_data in
   let w = prog_req w ~en:pr ~wen:gnd ~addr:(select h.rq_addr 8 0) ~din:(zero 32) in
   let w = data_req w ~en:(dw |: dr) ~wen:dw ~addr:(select h.rq_addr 9 0) ~din:(select h.rq_data 15 0) in
   let set_h (w : Signal.t W.t) f = { w with c = { w.c with host = f w.c.host } } in
@@ -336,8 +336,8 @@ let host_cycle (ctx : ctx) (w : Signal.t W.t) ~slot_free =
       let w = set_h w (fun h -> { h with haddr = U.upd r16 h.haddr (uresize (select sh 7 0) 16) }) in
       let w = peek_into ctx w ~en:(r16 &: ~:write) (select (w.c.host.haddr) 7 0) in
       let haddr0 = select w.c.host.haddr 7 0 in
-      let w = reg_write w ~en:(rword &: write) haddr0 (select sh 15 0) in
-      let w = reg_read_done w ~en:(rword &: ~:write) haddr0 in
+      let w = reg_write ctx w ~en:(rword &: write) haddr0 (select sh 15 0) in
+      let w = reg_read_done ctx w ~en:(rword &: ~:write) haddr0 in
       let w =
         set_h w (fun h ->
           { h with haddr = U.upd (rword &: inc) h.haddr (uresize (select h.haddr 7 0 +:. 1) 16) })

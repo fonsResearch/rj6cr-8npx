@@ -3,7 +3,23 @@
 Method: `doc/spec/circuit.md`, section 2. Every register and every pad output compared in every cycle;
 memories compared at the end; at most one user per memory port per cycle.
 
-## Campaigns of 2026-11-16
+## Campaigns of 2026-11-21, specification v1.1
+
+Same scenarios, seeds and session counts as 2026-11-16, run on the v1.1 model and circuit at the commit
+that adds this section. Session lengths are set by the stimulus and are the same as for v1.0.
+
+| scenario | seed | sessions | cycles | mismatches | port conflicts | memory words differing |
+|---|---|---|---|---|---|---|
+| core | 11 | 20 | 1,338,592 | 0 | 0 | 0 |
+| rules | 12 | 20 | 1,470,154 | 0 | 0 | 0 |
+| frames | 13 | 20 | 1,807,441 | 0 | 0 | 0 |
+| fuzz | 14 | 20 | 1,712,861 | 0 | 0 | 0 |
+| directed | 21 | 8 | 777,360 | 0 | 0 | 0 |
+| **total** | | **88** | **7,106,408** | **0** | **0** | **0** |
+
+The coverage counts below are those of v1.0 and were not recounted for v1.1.
+
+## Campaigns of 2026-11-16, specification v1.0
 
 Run with `spec/circuit/xcheck/bin/xcheck.exe <scenario> <seed> <runs>` at the commit that adds this log.
 

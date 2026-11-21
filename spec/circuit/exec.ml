@@ -114,20 +114,20 @@ let execute (ctx : ctx) (w : Signal.t W.t) id =
   let ior_rule_val =
     let k = select ior_addr 3 2 in
     let words =
-      List.map w.c.rules ~f:(fun (r : Signal.t Rule.t) ->
+      List.map ctx.s0.rules ~f:(fun (r : Signal.t Rule.t) ->
         mux (select ior_addr 1 0)
           [ uresize (concat_lsb [ r.active; r.v_min; r.v_max; r.repaired ]) 16; r.obs_min; r.obs_max; r.cnt ])
     in
     mux k words
   in
   let line_ok_r, line_j_r = Lregs.line_io_index ior_addr in
-  let line_mine = w.c.line.owner ==:. id in
+  let line_mine = ctx.s0.line.owner ==:. id in
   let ior_line = line_ok_r &: line_mine in
   let ior_val =
     U.oh_mux ~width:16
       [ ior_addr ==:. 0, st
       ; ior_rule, ior_rule_val
-      ; ~:(ior_addr ==:. 0) &: ~:ior_rule &: ior_line, Lregs.line_peek ~snap:ctx.snap w.c.line line_j_r ]
+      ; ~:(ior_addr ==:. 0) &: ~:ior_rule &: ior_line, Lregs.line_peek ~snap:ctx.snap ctx.s0.line line_j_r ]
   in
   let ior_bad = ~:(ior_addr ==:. 0) &: ~:ior_rule &: ~:ior_line in
   let regw =

@@ -1,7 +1,11 @@
 (* Reference model of the chip, one call of [step] per clock cycle. It is the executable form of
    doc/spec/machine.md (threads, timing hardware, pads), rules.md (rule engine), host.md (host port
    and loader), trace.md (trace) and line.md (line unit and response rules). spec/circuit/ is the
-   same specification as a circuit; log/xcheck.md compares the two. *)
+   same specification as a circuit; log/xcheck.md compares the two.
+
+   Version 1.1 (doc/decisions/spec_v1_1.md): every block reads the other blocks' registers from
+   [view], a copy of the state taken at the start of [step]; writes go to the live state in the
+   v1.0 order of blocks, which fixes the merges. *)
 open Isa
 
 let m16 = 0xFFFF
@@ -224,6 +228,7 @@ type chip =
   ; mutable ev_rise : int (* edges committed in the current cycle, P0..P15 *)
   ; mutable ev_fall : int
   ; mutable cyc_emits : (int * int) list (* EMITs executed in the current cycle *)
+  ; mutable cyc_emits_prev : (int * int) list (* EMITs of the previous cycle, as the trace sees them *)
   ; mutable hstat : int (* host status flags *)
   ; mutable now_latch : int
   ; host : host
@@ -278,11 +283,31 @@ let create ?(fifo_depth = 1) ?(n_rules = 4) () =
   ; safe_val = 0; safe_dir = 0; filt = Array.make 24 0; x = 0; s = 0; fcnt = Array.make 24 0
   ; pv_prev = 0; emits = []; fifo_depth; rules = Array.init n_rules (fun _ -> new_rule ())
   ; first_fail = None; first_blame = None; blame_before_fail = false; oe_hist = Array.make 8 0
-  ; ev_rise = 0; ev_fall = 0; cyc_emits = []; hstat = 0; now_latch = 0
+  ; ev_rise = 0; ev_fall = 0; cyc_emits = []; cyc_emits_prev = []; hstat = 0; now_latch = 0
   ; host = { count = 0; sh = 0; cmd = 0; haddr = 0; osh = 0; miso = 0; rbuf = 0; rpend = None; req = None }
   ; tr_en = false; tr_freeze = false; tr_base = 0; tr_size = 0; tr_mask = 0; tr_post = 4; tr_ptr = 0
   ; tr_wrapped = false; tr_frozen = false; tr_trig = false; tr_left = 0; tr_rec = Array.make 4 0
   ; tr_widx = 4; tr_lost = false; line = new_line () }
+;;
+
+(* The registers as they are at the start of a cycle: what a block reads of the other blocks
+   (doc/decisions/spec_v1_1.md, V1). The memories are shared, not copied: no reader of the
+   copy reads them. *)
+let copy_thread th =
+  { th with r = Array.copy th.r; wait = Option.map (fun w -> { w with w_due = w.w_due }) th.wait
+  ; inbox = Queue.copy th.inbox; outbox = Queue.copy th.outbox }
+;;
+
+let copy_line l =
+  { l with lc = Array.copy l.lc; resp = Array.map (fun q -> { q with q_ctl = q.q_ctl }) l.resp
+  ; l_snap = Array.copy l.l_snap }
+;;
+
+let copy_chip c =
+  { c with th = Array.map copy_thread c.th; owner = Array.copy c.owner; filt = Array.copy c.filt
+  ; fcnt = Array.copy c.fcnt; rules = Array.map (fun r -> { r with en = r.en }) c.rules
+  ; oe_hist = Array.copy c.oe_hist; host = { c.host with count = c.host.count }
+  ; tr_rec = Array.copy c.tr_rec; line = copy_line c.line }
 ;;
 
 (* --- pins --- *)
@@ -319,20 +344,21 @@ let add_p th =
   th.t_frac <- total land 0xFF
 ;;
 
-let status chip th =
+let status ?view chip th =
+  let v = Option.value view ~default:chip in
   (if th.evf then 1 else 0)
   lor (if Queue.is_empty th.inbox then 0 else 2)
   lor (if Queue.length th.outbox < chip.fifo_depth then 4 else 0)
   lor (if th.late then 8 else 0)
-  lor (if chip.first_fail <> None then 16 else 0)
-  lor (if chip.first_blame <> None then 32 else 0)
-  lor (if Array.exists (fun r -> r.repaired) chip.rules then 64 else 0)
+  lor (if v.first_fail <> None then 16 else 0)
+  lor (if v.first_blame <> None then 32 else 0)
+  lor (if Array.exists (fun r -> r.repaired) v.rules then 64 else 0)
   lor
-  if chip.line.l_owner = th.id
+  if v.line.l_owner = th.id
   then (
     (* line unit, as its owner sees it: 7 transmitter busy, 8 receiver in a frame, 9 frame
        received, 10 frame sent, 11 any error flag, 12 / 13 response rule 0 / 1 fired *)
-    let st = chip.line.l_snap.(0) in
+    let st = v.line.l_snap.(0) in
     let b k = (st lsr k) land 1 in
     (b 0 lsl 7) lor (b 2 lsl 8) lor (b 4 lsl 9) lor (b 3 lsl 10)
     lor (if st land 0x7C0 <> 0 then 1 lsl 11 else 0)
@@ -595,7 +621,8 @@ exception Blocked
 
 (* Cycle c+3 of an instruction fetched in cycle c: everything else. All effects are
    collected first and applied only if the instruction neither waits nor faults. *)
-let execute chip th ~n ~pv w =
+let execute ?view chip th ~n ~pv w =
+  let view = Option.value view ~default:chip in
   let e = (n + 1) land m32 in
   try
     if w < 0 then raise (Fault_exn Pcbound);
@@ -621,7 +648,7 @@ let execute chip th ~n ~pv w =
     in
     let t_int = ref th.t_int and t_frac = ref th.t_frac and p = ref th.p in
     let new_wait = ref None and halt = ref false and clr = ref 0 in
-    let st = status chip th in
+    let st = status ~view chip th in
     let pin_src () = if a "src" = 1 then th.cap else pv in
     let branch taken = if taken then next_pc := a "tgt" in
     (match i.def.op with
@@ -720,9 +747,9 @@ let execute chip th ~n ~pv w =
        let k = (addr - 0x20) / 4 in
        if addr = 0
        then regw := Some (a "rd", st)
-       else if addr >= 0x20 && k < Array.length chip.rules
+       else if addr >= 0x20 && k < Array.length view.rules
        then (
-         let r = chip.rules.(k) in
+         let r = view.rules.(k) in
          let v =
            match addr land 3 with
            | 0 ->
@@ -737,7 +764,7 @@ let execute chip th ~n ~pv w =
          regw := Some (a "rd", v))
        else (
          match line_io_index addr with
-         | Some j when chip.line.l_owner = th.id -> regw := Some (a "rd", line_peek ~snap:true chip.line j)
+         | Some j when view.line.l_owner = th.id -> regw := Some (a "rd", line_peek ~snap:true view.line j)
          | _ -> raise (Fault_exn Ioperm))
      | Iow | Iowi ->
        let addr = a "addr" in
@@ -746,7 +773,7 @@ let execute chip th ~n ~pv w =
        then clr := v
        else (
          match line_io_index addr with
-         | Some j when chip.line.l_owner = th.id -> later (fun () -> line_poke chip.line j v)
+         | Some j when view.line.l_owner = th.id -> later (fun () -> line_poke chip.line j v)
          | _ -> raise (Fault_exn Ioperm)));
     (* timing: is the deadline still ahead? *)
     let uses_deadline = i.tm >= 2 || (match !new_wait with Some w -> w.w_to | None -> false) in
@@ -784,7 +811,7 @@ let execute chip th ~n ~pv w =
 (* Timing hardware of one thread in cycle n. A commit that is due fires unless the rule
    engine blocks it; a deadline commit that fires in another cycle than t - 1, because it
    was late or blocked, moves t to the cycle in which the pads change. *)
-let timing chip th ~n ~pv ~pv_prev =
+let timing ?view chip th ~n ~pv ~pv_prev =
   let next = (n + 1) land m32 in
   let reach = th.t_int = next in
   if th.armed
@@ -814,7 +841,7 @@ let timing chip th ~n ~pv ~pv_prev =
           | 1 -> cur = 1
           | 2 -> prev = 0 && cur = 1
           | _ -> prev = 1 && cur = 0)
-        else (status chip th lsr wt.idx) land 1 = wt.cond
+        else (status ?view chip th lsr wt.idx) land 1 = wt.cond
       in
       if hit then wt.w_due <- 1 else if wt.w_to && reach then wt.w_due <- 2
     end;
@@ -936,10 +963,11 @@ let hflag chip b = chip.hstat <- chip.hstat lor (1 lsl b)
 (* A write to the program memory. Inside the window of a running thread it is refused.
    Inside a window that is being loaded it must be the next word in sequence, and enters the
    digest. Inside any other window it is done and the window is no longer loaded. *)
-let prog_write chip addr word =
+let prog_write ?view chip addr word =
+  let view = Option.value view ~default:chip in
   let a = addr land 511 in
   let hits = List.filter (fun th -> a >= th.pbase && a < th.pbase + th.psize) (Array.to_list chip.th) in
-  if List.exists (fun th -> running th || (th.loading && a <> th.pbase + th.load_count)) hits
+  if List.exists (fun th -> running view.th.(th.id) || (th.loading && a <> th.pbase + th.load_count)) hits
   then begin
     hflag chip 2;
     false
@@ -965,8 +993,9 @@ let enter_stop chip th =
   th.state <- Idle
 ;;
 
-let do_start chip th =
-  if th.loaded && (not (running th)) && (not th.armed) && th.dbase + th.dsize <= 1024
+let do_start ?view chip th =
+  let tv = match view with Some v -> v.th.(th.id) | None -> th in
+  if th.loaded && (not (running tv)) && (not tv.armed) && th.dbase + th.dsize <= 1024
   then begin
     th.pc <- th.entry; th.state <- Run; th.flight <- None; th.wait <- None
     ; th.sm <- 0; th.em <- 0; th.sv <- 0; th.ev <- 0; th.evf <- false; th.late <- false
@@ -989,7 +1018,9 @@ let verdict_info v ~flag =
 ;;
 
 (* Value of a host register; reading has no effect except latching the high half of now. *)
-let reg_peek chip addr =
+let reg_peek ?view chip addr =
+  let live = chip in
+  let chip = Option.value view ~default:chip in
   let owners k =
     let v = ref 0 in
     for j = 3 downto 0 do v := (!v lsl 4) lor (chip.owner.((4 * k) + j) land 7) done;
@@ -1006,7 +1037,7 @@ let reg_peek chip addr =
   | 0x00 -> 0x8401
   | 0x01 -> Array.length chip.rules lor (chip.fifo_depth lsl 4) lor (Array.length chip.th lsl 8)
   | 0x02 ->
-    chip.now_latch <- chip.now lsr 16;
+    live.now_latch <- chip.now lsr 16;
     chip.now land m16
   | 0x03 -> chip.now_latch
   | 0x04 -> chip.hstat
@@ -1106,15 +1137,18 @@ let reg_peek chip addr =
 ;;
 
 (* The host has read a whole register word: the one read with an effect is the mailbox. *)
-let reg_read_done chip addr =
+let reg_read_done ?view chip addr =
+  let view = Option.value view ~default:chip in
   match thread_reg addr with
   | Some (t, 9) ->
     let th = chip.th.(t) in
-    if Queue.is_empty th.outbox then hflag chip 4 else ignore (Queue.pop th.outbox)
+    if Queue.is_empty view.th.(t).outbox then hflag chip 4 else ignore (Queue.pop th.outbox)
   | _ -> ()
 ;;
 
-let reg_write chip addr v =
+let reg_write ?view chip addr v =
+  let view_ = view in
+  let view = Option.value view ~default:chip in
   let v = v land m16 in
   match addr with
   | 0x04 -> chip.hstat <- chip.hstat land lnot v
@@ -1148,15 +1182,15 @@ let reg_write chip addr v =
   | _ ->
     (match thread_reg addr, rule_reg chip addr with
      | Some (t, j), _ ->
-       let th = chip.th.(t) in
-       let stopped_only f = if running th then hflag chip 2 else f () in
+       let th = chip.th.(t) and tv = view.th.(t) in
+       let stopped_only f = if running tv then hflag chip 2 else f () in
        (match j with
         | 0 ->
           (match v with
-           | 1 -> do_start chip th
-           | 2 -> if th.state <> Idle then enter_stop chip th
+           | 1 -> do_start ?view:view_ chip th
+           | 2 -> if tv.state <> Idle then enter_stop chip th
            | 3 ->
-             if (not (running th)) && th.psize >= 1 && th.pbase + th.psize <= 512
+             if (not (running tv)) && th.psize >= 1 && th.pbase + th.psize <= 512
              then begin
                th.loading <- true; th.loaded <- false; th.crc <- 0xFFFF; th.load_count <- 0
              end
@@ -1172,7 +1206,7 @@ let reg_write chip addr v =
         | 5 -> stopped_only (fun () -> th.dbase <- v land 1023)
         | 6 -> stopped_only (fun () -> if v > 1024 then hflag chip 2 else th.dsize <- v)
         | 7 -> th.strict <- v land 1 = 1
-        | 8 -> if Queue.length th.inbox < chip.fifo_depth then Queue.push v th.inbox else hflag chip 3
+        | 8 -> if Queue.length tv.inbox < chip.fifo_depth then Queue.push v th.inbox else hflag chip 3
         | 13 ->
           if th.loading && th.load_count = th.psize && th.crc = v
           then begin
@@ -1218,7 +1252,7 @@ let cmd_info = function
 ;;
 
 (* The host port in cycle n. SCK, MOSI and CS_N are the synchronised pins P16, P17, P18. *)
-let host_cycle chip ~n ~pv ~pv_prev ~slot_free =
+let host_cycle ?view chip ~n ~pv ~pv_prev ~slot_free =
   let b k = (pv lsr k) land 1 and bp k = (pv_prev lsr k) land 1 in
   let h = chip.host in
   (* the memories have a synchronous read: a word read in cycle n is in rbuf from cycle n + 1 *)
@@ -1231,7 +1265,7 @@ let host_cycle chip ~n ~pv ~pv_prev ~slot_free =
   (match h.req with
    | Some (prog, write, a, d) when (prog && n land 3 = 3) || ((not prog) && n land 3 = 1 && slot_free) ->
      if prog
-     then if write then ignore (prog_write chip a d) else h.rpend <- Some chip.prog.(a land 511)
+     then if write then ignore (prog_write ?view chip a d) else h.rpend <- Some chip.prog.(a land 511)
      else if write
      then chip.data.(a land 1023) <- d land m16
      else h.rpend <- Some chip.data.(a land 1023);
@@ -1259,13 +1293,13 @@ let host_cycle chip ~n ~pv ~pv_prev ~slot_free =
           if c = 16
           then begin
             h.haddr <- h.sh land 0xFF;
-            if not write then h.osh <- reg_peek chip h.haddr lsl 16
+            if not write then h.osh <- reg_peek ?view chip h.haddr lsl 16
           end
           else if c > 16 && (c - 16) land 15 = 0
           then begin
-            if write then reg_write chip h.haddr (h.sh land m16) else reg_read_done chip h.haddr;
+            if write then reg_write ?view chip h.haddr (h.sh land m16) else reg_read_done ?view chip h.haddr;
             if inc then h.haddr <- (h.haddr + 1) land 0xFF;
-            if not write then h.osh <- reg_peek chip h.haddr lsl 16
+            if not write then h.osh <- reg_peek ?view chip h.haddr lsl 16
           end
         | Some (region, write, _) ->
           let prog = region = R_prog in
@@ -1718,7 +1752,8 @@ let line_cycle chip ~n ~pv ~pv_prev =
      word 3  [15] changes or events were lost before this record
              [14] 0: pin record, [7:0] = pins P16..P23
                   1: EMIT record, [13:12] = thread, [7:0] = code *)
-let trace_cycle chip ~n ~pv ~pv_prev ~slot_free =
+let trace_cycle ?view chip ~n ~pv ~pv_prev ~slot_free =
+  let view = Option.value view ~default:chip in
   if chip.tr_en && chip.tr_size > 0
   then begin
     if chip.tr_widx < 4 && n land 3 = 1 && slot_free
@@ -1736,7 +1771,7 @@ let trace_cycle chip ~n ~pv ~pv_prev ~slot_free =
         if chip.tr_trig && chip.tr_left > 0 then chip.tr_left <- chip.tr_left - 1
       end
     end;
-    if chip.tr_freeze && (chip.first_fail <> None || chip.first_blame <> None) && not chip.tr_trig
+    if chip.tr_freeze && (view.first_fail <> None || view.first_blame <> None) && not chip.tr_trig
     then begin
       chip.tr_trig <- true;
       chip.tr_left <- chip.tr_post
@@ -1745,7 +1780,7 @@ let trace_cycle chip ~n ~pv ~pv_prev ~slot_free =
     if not chip.tr_frozen
     then begin
       let changed = (pv lxor pv_prev) land chip.tr_mask <> 0 in
-      let emits = chip.cyc_emits in
+      let emits = chip.cyc_emits_prev in
       if chip.tr_widx < 4
       then (if changed || emits <> [] then chip.tr_lost <- true)
       else if changed || emits <> [] || chip.tr_lost
@@ -1868,6 +1903,8 @@ let step chip ~pad =
   done;
   chip.s <- !s_new land 0xFF00FF;
   chip.x <- pad land 0xFF00FF;
+  (* v1.1: every block reads the other blocks' registers as they are now *)
+  let view = copy_chip chip in
   let pv = pins chip in
   let pv_prev = chip.pv_prev in
   chip.value_n <- chip.value;
@@ -1877,6 +1914,8 @@ let step chip ~pad =
   chip.ev_fall <- 0;
   chip.cyc_emits <- [];
   let line_uses_slot = line_cycle chip ~n ~pv ~pv_prev in
+  (* the line unit's status as the threads read it in this cycle *)
+  Array.blit chip.line.l_snap 0 view.line.l_snap 0 (Array.length view.line.l_snap);
   Array.iter
     (fun th ->
       (* fetch, on the state the thread has during this cycle *)
@@ -1886,11 +1925,11 @@ let step chip ~pad =
        | Some (c, w) when c = n - 2 && w >= 0 -> mem_access chip th w
        | _ -> ());
       (* timing events come first; an instruction in its execute cycle sees their result *)
-      timing chip th ~n ~pv ~pv_prev;
+      timing ~view chip th ~n ~pv ~pv_prev;
       match th.flight with
       | Some (c, w) when c = n - 3 ->
         th.flight <- None;
-        execute chip th ~n ~pv w
+        execute ~view chip th ~n ~pv w
       | _ -> ())
     chip.th;
   (* while the line unit transmits, its pins follow it and not the commits of a thread *)
@@ -1907,8 +1946,9 @@ let step chip ~pad =
   let host_uses_slot =
     match chip.host.req with Some (false, _, _, _) -> n land 3 = 1 && not line_uses_slot | _ -> false
   in
-  host_cycle chip ~n ~pv ~pv_prev ~slot_free:(not line_uses_slot);
-  trace_cycle chip ~n ~pv ~pv_prev ~slot_free:(not (host_uses_slot || line_uses_slot));
+  (* the host's writes land after every other block's own update (V2.4), so the trace runs first *)
+  trace_cycle ~view chip ~n ~pv ~pv_prev ~slot_free:(not (host_uses_slot || line_uses_slot));
+  host_cycle ~view chip ~n ~pv ~pv_prev ~slot_free:(not line_uses_slot);
   for k = 7 downto 1 do chip.oe_hist.(k) <- chip.oe_hist.(k - 1) done;
   (* pins without a thread as owner hold the safe pattern *)
   let unowned = ref 0 in
@@ -1918,5 +1958,6 @@ let step chip ~pad =
   let u8 = u land 0xFF in
   chip.dir <- chip.dir_n land lnot u8 lor (chip.safe_dir land u8);
   chip.pv_prev <- pv;
+  chip.cyc_emits_prev <- chip.cyc_emits;
   chip.now <- (n + 1) land m32
 ;;

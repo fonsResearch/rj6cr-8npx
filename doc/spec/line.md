@@ -1,11 +1,19 @@
 # Line unit and response rules
 
-Version 1.0, frozen 2026-11-16 (`doc/decisions/spec_freeze.md`); changed only together with
+Version 1.1 of 2026-11-21: registered block boundaries (`doc/decisions/spec_v1_1.md`); version 1.0
+frozen 2026-11-16 (`doc/decisions/spec_freeze.md`); changed only together with
 `spec/model.ml` (`line_cycle`) and `spec/circuit/`. The line unit sends and receives frames of a bit-serial line code at rates the
 threads cannot reach (down to one bit per cycle), and two response rules answer inside a frame without
 an instruction being executed. Registers, pins and time are as in `machine.md`.
 
 Every statement below is implemented in the model; section 9 lists the tests and what they measured.
+
+**Visibility (v1.1).** The line unit is a block (`spec_v1_1.md`, V1); it already runs on the register
+values at the start of the cycle (v1.0). Writes by its owner thread (IOW) or the host to line unit
+registers are seen by every reader from the next cycle; the owner's status word is taken at the start
+of the cycle as before. Open: the unit's internal pipeline (V4) and its fixed output latency are fixed
+after the depth of its stages is measured on the v1.1 circuit; until then this document describes the
+unit without it.
 
 ## 1. Ownership and access
 

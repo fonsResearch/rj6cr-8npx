@@ -23,12 +23,12 @@ let trace_cycle (ctx : ctx) (w : Signal.t W.t) ~slot_free =
     ; left = U.upd (done_ &: tr.trig &: (tr.left >:. 0)) tr.left (tr.left -:. 1)
     }
   in
-  let trig_set = on &: tr.freeze &: (w.c.fail.valid |: w.c.blame.valid) &: ~:(tr.trig) in
+  let trig_set = on &: tr.freeze &: (ctx.s0.fail.valid |: ctx.s0.blame.valid) &: ~:(tr.trig) in
   let tr = { tr with trig = tr.trig |: trig_set; left = U.upd trig_set tr.left tr.post } in
   let tr = { tr with frozen = tr.frozen |: (on &: tr.trig &: (tr.left ==:. 0) &: (tr.widx ==:. 4)) } in
   let rec_on = on &: ~:(tr.frozen) in
   let changed = (ctx.pv ^: ctx.pv_prev) &: tr.mask <>:. 0 in
-  let em = w.t.em_v in
+  let em = tr.em_v in
   let busy = tr.widx <:. 4 in
   let lost_busy = rec_on &: busy &: (changed |: em) in
   let new_rec = rec_on &: ~:busy &: (changed |: em |: tr.lost) in
@@ -38,7 +38,7 @@ let trace_cycle (ctx : ctx) (w : Signal.t W.t) ~slot_free =
     concat_msb
       [ lost'
       ; mux2 pin_record (zero 7 @: select ctx.pv 23 16)
-          (concat_msb [ vdd; w.t.em_t; zero 4; w.t.em_c ])
+          (concat_msb [ vdd; tr.em_t; zero 4; tr.em_c ])
       ]
   in
   let tr =
@@ -47,6 +47,9 @@ let trace_cycle (ctx : ctx) (w : Signal.t W.t) ~slot_free =
     ; rec_ =
         List.map2_exn tr.rec_ [ select ctx.n 15 0; select ctx.n 31 16; select ctx.pv 15 0; w3 ] ~f:(U.upd new_rec)
     ; widx = U.upd new_rec tr.widx (zero 3)
+    ; em_v = w.t.em_v
+    ; em_t = w.t.em_t
+    ; em_c = w.t.em_c
     }
   in
   { w with c = { w.c with trace = tr } }
@@ -91,7 +94,7 @@ let step (s : Signal.t Chip.t) ~pad ~prog_dout ~data_dout =
   let c = { c with s = s_new; x = pad &: in_mask; fcnt = List.map fl ~f:snd } in
   let pv = s_new |: (uresize (select c.value 15 8) 24 |> fun x -> sll x 8) in
   let oe0 = c.dir &: ~:(c.od &: select c.value 7 0) in
-  let ctx = { n; e = n +:. 1; pv; pv_prev = c.pv_prev; oe0; snap = c.line; prog_dout; data_dout } in
+  let ctx = { n; e = n +:. 1; pv; pv_prev = c.pv_prev; oe0; snap = c.line; s0 = c; prog_dout; data_dout } in
   let t0 = Tmp.map Tmp.port_names_and_widths ~f:(fun (_, wd) -> zero wd) in
   let t0 = { t0 with value_n = c.value; dir_n = c.dir } in
   let w = { W.c; t = t0 } in
@@ -143,8 +146,9 @@ let step (s : Signal.t Chip.t) ~pad ~prog_dout ~data_dout =
   let w = Rules.rules_update ctx w in
   let h = w.c.host in
   let host_uses = h.rq_v &: ~:(h.rq_prog) &: (slot ==:. 1) &: ~:(w.t.l_slot) in
-  let w = Hostp.host_cycle ctx w ~slot_free:~:(w.t.l_slot) in
+  (* the host's writes land after every other block's own update (v1.1 V2.4): trace first *)
   let w = trace_cycle ctx w ~slot_free:~:(host_uses |: w.t.l_slot) in
+  let w = Hostp.host_cycle ctx w ~slot_free:~:(w.t.l_slot) in
   let c = w.c in
   let oe_hist = ctx.oe0 :: List.take c.oe_hist 6 in
   (* pins without a thread as owner hold the safe pattern *)

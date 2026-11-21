@@ -126,6 +126,9 @@ module Trace = struct
     ; rec_ : 'a list [@length 4] [@bits 16]
     ; widx : 'a [@bits 3]
     ; lost : 'a
+    ; em_v : 'a (* the EMIT of the previous cycle, as the trace sees it (v1.1) *)
+    ; em_t : 'a [@bits 2]
+    ; em_c : 'a [@bits 8]
     }
   [@@deriving hardcaml]
 end

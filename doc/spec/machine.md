@@ -1,12 +1,22 @@
 # Machine model: threads, time and pins
 
-Version 1.0, frozen 2026-11-16 (`doc/decisions/spec_freeze.md`); changed only together with
+Version 1.1 of 2026-11-21: registered block boundaries (`doc/decisions/spec_v1_1.md`); version 1.0
+frozen 2026-11-16 (`doc/decisions/spec_freeze.md`); changed only together with
 `spec/model.ml` and `spec/circuit/`. Scope: the three program threads, their timing hardware, the pad stage, memory windows, faults.
 The rule engine is in `rules.md`, the host port and loader in `host.md`, the trace in `trace.md`, the
 line unit and the response rules in `line.md`. Instruction encodings are in `isa.md`, generated from `spec/isa.ml`.
 
 Every statement below is implemented in `spec/model.ml`; the tests named in section 12 show the timing
 statements on running programs.
+
+**Visibility (v1.1).** Each thread is a block: it reads the other blocks' registers as they are at the
+start of the cycle (`spec_v1_1.md`, V1). For a thread this means: the verdict bits 4 and 5 and the
+repaired bit 6 of the status word (BST, WAITS, IOR) show verdicts and repairs recorded up to the
+previous cycle; the line unit's ownership and configuration registers, and the rule registers read
+by IOR, are those of the start of the cycle, so a write by another thread (IOW) or by the host is seen
+from the next cycle. A thread's own timing and execute keep their order inside the cycle. The pad
+registers merge the commits of all threads on their own pins, the line unit's override and the safe
+pattern in the same cycle, as in v1.0 (V2).
 
 ## 1. Conventions
 

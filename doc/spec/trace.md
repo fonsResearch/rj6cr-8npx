@@ -1,7 +1,14 @@
 # Trace
 
-Version 1.0, frozen 2026-11-16 (`doc/decisions/spec_freeze.md`). Executable form: `spec/model.ml` (`trace_cycle`,
+Version 1.1 of 2026-11-21: registered block boundaries (`doc/decisions/spec_v1_1.md`); version 1.0
+frozen 2026-11-16 (`doc/decisions/spec_freeze.md`). Executable form: `spec/model.ml` (`trace_cycle`,
 `trace_records`); examples in `spec/test/test_trace.ml`.
+
+**Visibility (v1.1).** The trace is a block (`spec_v1_1.md`, V1). An EMIT executed in cycle n is seen
+by the trace in cycle n+1, and its record carries cycle n+1. The freeze on a verdict starts in the
+cycle after the verdict is recorded. A host write to a trace register is applied after the trace's own
+update of the cycle. Pin records are unchanged: they compare the pins as read in this and the previous
+cycle.
 
 ## 1. What is recorded
 

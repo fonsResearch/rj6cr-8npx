@@ -86,3 +86,23 @@ let%expect_test "the window is a ring" =
     (List.length edges) (recs = last4) (Model.reg_peek chip 0x35);
   [%expect {| 11 edges into 4 records: the last four are kept: true; pointer register 8003 (bit 15: wrapped) |}]
 ;;
+
+(* v1.1 (doc/decisions/spec_v1_1.md 3): the trace sees an EMIT in the cycle after it is
+   executed, so the record carries that cycle. *)
+let%expect_test "an EMIT is recorded with the cycle after its execution" =
+  let chip = setup "TNOW 8\nEMIT 7\nHALT\n" in
+  trace_on chip ~base:512 ~size:32 ~mask:0 ();
+  ignore (run chip ~cycles:100 ~watch:[]);
+  (* the EMIT log holds the effect cycle n + 1 of an instruction executed in cycle n *)
+  let executed = List.map (fun (e, t, k) -> e - 1, t, k) chip.emits in
+  List.iter (fun (c, t, k) -> Printf.printf "EMIT %d by thread %d executed in cycle %d\n" k t c) executed;
+  List.iter (fun r -> print_endline (show_rec r)) (Model.trace_records chip);
+  (match executed, Model.trace_records chip with
+   | [ (c, _, _) ], [ (rc, _, Some _, _) ] -> Printf.printf "record cycle - execute cycle = %d\n" (rc - c)
+   | _ -> print_endline "unexpected");
+  [%expect {|
+    EMIT 7 by thread 0 executed in cycle 7
+    8: emit 7 by thread 0
+    record cycle - execute cycle = 1
+    |}]
+;;

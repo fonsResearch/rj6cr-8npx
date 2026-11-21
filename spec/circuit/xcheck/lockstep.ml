@@ -100,7 +100,10 @@ let project (c : Model.chip) : int S.Chip.t =
   ; trace =
       { en = b c.tr_en; freeze = b c.tr_freeze; base = c.tr_base; size = c.tr_size; mask = c.tr_mask; post = c.tr_post
       ; ptr = c.tr_ptr; wrapped = b c.tr_wrapped; frozen = b c.tr_frozen; trig = b c.tr_trig; left = c.tr_left
-      ; rec_ = Array.to_list c.tr_rec; widx = c.tr_widx; lost = b c.tr_lost }
+      ; rec_ = Array.to_list c.tr_rec; widx = c.tr_widx; lost = b c.tr_lost
+      ; em_v = b (c.cyc_emits_prev <> [])
+      ; em_t = (match c.cyc_emits_prev with (t, _) :: _ -> t | [] -> 0)
+      ; em_c = (match c.cyc_emits_prev with (_, k) :: _ -> k | [] -> 0) }
   ; line
   ; th = Array.to_list (Array.map (project_thread c) c.th)
   ; rules = Array.to_list (Array.map project_rule c.rules) }

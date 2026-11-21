@@ -1,6 +1,6 @@
 # Specification circuit
 
-Version 1.0 of 2026-11-16. The specification circuit is the reference model (`spec/model.ml`) written a
+Version 1.1 of 2026-11-21 (registered block boundaries, `doc/decisions/spec_v1_1.md`); version 1.0 of 2026-11-16. The specification circuit is the reference model (`spec/model.ml`) written a
 second time, as a Hardcaml circuit, from the documents of this directory. It has two uses:
 
 1. It tests the documents and the model. If two implementations of the specification, one sequential
@@ -86,20 +86,24 @@ in `log/xcheck.md`.
 
 ## 4. Same-cycle dependencies
 
-These are the places where the model's order makes a value computed in a cycle visible to a later block
-of the same cycle. They are part of the specification; the chip RTL has to reproduce them, and they are
-the first candidates for the critical path at 48 MHz:
+In version 1.0 every block of a cycle saw what the earlier blocks had done in the same cycle, and the
+deepest chain ran through all of them (`spec_v1_1.md` 1). In version 1.1 each block reads the other
+blocks' registers from `ctx.s0`, the state at the start of the cycle; `Step` still threads the working
+state through the blocks in the v1.0 order, which now only orders the writes (V2). The dependencies
+that remain inside one cycle:
 
-1. Rule state and a thread's staged pins decide whether its commit fires; a firing deadline commit moves
-   `t`; the instruction executing in the same cycle computes with that `t` (TADDI, TADDR, the slack of
-   any timed instruction). Path: rule comparators, the fire decision, a 40-bit add, a 32-bit subtract and
-   compare (`machine.md`, open point 1; `rules.md`, open point 2).
-2. A verdict recorded in the cycle (by the line unit, by an earlier thread's commit check, by the
-   executing thread's own timing) is in status bits 4 to 6 for BST, WAITS and IOR of that cycle.
-3. The line unit's pad override is an event of the rule engine in the same cycle.
-4. The host port reads registers after every other block of the cycle has updated them.
-5. The trace freezes on a verdict of the same cycle; ownership written by the host takes effect on the
-   pads at the end of the same cycle.
+1. Inside a thread: its timing decides whether its commit fires and moves `t`; its execute computes
+   with that `t` (TADDI, TADDR, the slack of a timed instruction). Path: rule comparators, the fire
+   decision, a 40-bit add, a 32-bit subtract and compare.
+2. Commit edges, wire edges, EMIT codes and line unit symbols of the cycle into the rule engine
+   (`rules.md`, V3). The chip registers the events and forwards the part of the next rule state the
+   commit check needs.
+3. The pad merge: commits on own pins, the line unit's override, the safe pattern (V2).
+4. The verdict merge: candidates of the line unit, threads 0 to 2 and the rule engine, first wins (V2).
+5. Inside the line unit, its whole bit-level pipeline (V4, open).
+
+The trace and the host now run in the order trace, host, so that the host's writes land after the
+trace's own update; the trace's view of EMIT is the registered `trace.em_*` of the previous cycle.
 
 ## 5. Notes for the Verilog of the chip
 

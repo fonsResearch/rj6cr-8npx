@@ -74,3 +74,4 @@ to the table below with the reason.
 
 | date | change | reason | commit |
 |---|---|---|---|
+| 2026-11-21 | v1.1: registered block boundaries; reads of other blocks' registers at the start of the cycle, EMIT seen by the trace one cycle later, trace before host (`spec_v1_1.md`) | the v1.0 single-cycle chain through all blocks is about 79 ns at the slow corner (estimate); the clock is 20.83 ns | this commit |

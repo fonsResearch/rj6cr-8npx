@@ -131,14 +131,14 @@ let status (ctx : ctx) (w : Signal.t W.t) id =
   let t = th w id in
   let base =
     concat_lsb
-      [ t.evf; t.in_v; ~:(t.out_v); t.late; w.c.fail.valid; w.c.blame.valid
-      ; U.any (List.map w.c.rules ~f:(fun r -> r.repaired)) ]
+      [ t.evf; t.in_v; ~:(t.out_v); t.late; ctx.s0.fail.valid; ctx.s0.blame.valid
+      ; U.any (List.map ctx.s0.rules ~f:(fun r -> r.repaired)) ]
   in
   let st = Lregs.line_status ctx.snap in
   let b i = bit st i in
   let line =
     concat_lsb [ b 0; b 2; b 4; b 3; select st 10 6 <>:. 0; b 12; b 13 ]
-    &: repeat (w.c.line.owner ==:. id) 7
+    &: repeat (ctx.s0.line.owner ==:. id) 7
   in
   concat_lsb [ base; line; zero 2 ]
 ;;

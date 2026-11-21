@@ -1,7 +1,16 @@
 # Rule engine and enforcement
 
-Version 1.0, frozen 2026-11-16 (`doc/decisions/spec_freeze.md`). Executable form: `spec/model.ml` (`rules_update`, `may_fire`,
+Version 1.1 of 2026-11-21: registered block boundaries (`doc/decisions/spec_v1_1.md`); version 1.0
+frozen 2026-11-16 (`doc/decisions/spec_freeze.md`). Executable form: `spec/model.ml` (`rules_update`, `may_fire`,
 `record`); examples in `spec/test/test_rules.ml`. Read `machine.md` first.
+
+**Visibility (v1.1).** The rule check of a commit is unchanged (`spec_v1_1.md`, V3): a commit in cycle
+n is decided from the rule state after the events of cycle n-1, and the events of cycle n (commit edges,
+wire edges, EMIT codes, line unit symbols) are processed at the end of cycle n. Verdicts found in one
+cycle are merged in the order line unit, thread 0, 1, 2, rule engine, and the first is recorded, as in
+v1.0 (V2). What changes is who sees the result when: threads (status bits), the trace (freeze) and the
+host (registers 0x20 to 0x26, rule registers) see a verdict or a rule register from the cycle after it
+was recorded.
 
 ## 1. What a rule is
 
