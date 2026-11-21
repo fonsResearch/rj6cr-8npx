@@ -1,4 +1,4 @@
-# Skeleton gate G1 (plan step 4), status 2026-11-20 (updated after floorplan A)
+# Skeleton gate G1 (plan step 4), status 2026-11-20 (updated 2026-11-21: routing fixed on the 312k point)
 
 Gate G1: detailed routing clean and slow-corner setup slack at least +1.0 ns at 20.83 ns.
 **Result so far: G1 fails.** No skeleton configuration has routed. The step is open; the options are
@@ -101,3 +101,37 @@ Floorplan settings carried forward: soft blockage around the macros and a placem
 real utilisation. The remaining failure is the structure of the proxy netlist, which is option C:
 the chip RTL is written for area and wiring (narrow read paths, no chip-wide multiplexer trees) and
 is measured on this floorplan before G1 is retried.
+
+## 7. Routing fix and the routable size [measured]
+
+The hotspot of section 6 is the thread register file (3 x 8 x 16 flops) read by up to 11
+multiplexers: the execute stage reads `rr (field)` for each instruction format, and register fields
+sit at 11 different bit positions, so synthesis cannot merge them. The skeleton now reads the
+register file through three ports, A (`ra`), B (`rb`) and D (`rd`), whose index is selected by the
+one-hot decode (`probe/skeleton/core/exec.ml` on `probe-skeleton-s308-rp`). Every use is gated by
+its instruction, so the value seen by the executing instruction is unchanged; the same change on
+`spec/circuit/exec.ml` passes `dune test spec/circuit` (lockstep against the model, 629,586 cycles,
+0 mismatches, planted control detected). Local mapping of the 312k point: 309.0k to 301.1k um^2,
+`a22oi_1` 2,340 to 1,715.
+
+With three read ports, the soft placement blockage of section 6 and a placement density near the
+utilisation:
+
+| netlist (synthesis) | density | util. | Metal3 use | GRT overflow | DRT result |
+|---|---|---|---|---|---|
+| 306,574 | 45 | 40.0 % | 63.0 % | 33 | **0 violations** (run 44777903562) |
+| 306,574, 3 iterations | 45 | 40.0 % | 63.0 % | 50 | 2,841 (7,930 without the ports) |
+| 376,652 | 55 | 49.2 % | 85.4 % | 8,663 | 762 at iteration 56, 1,011 at 59, cut at 6 h |
+| 436,459 | 62 | 57.0 % | 101.3 % | 31,460 | 42,595 at iteration 5, cut at 6 h |
+
+Run 44777903562 is the first skeleton that passes routing: LVS clean, Magic DRC 0 outside the
+macros (230,595 inside, as in the probe), hold met at every corner (worst 0.105 ns, fast corner),
+40 max-capacitance and 252 max-slew violations at the slow corner. Setup fails: worst slack
+-17.43 ns slow, -3.31 ns typical, +4.97 ns fast; the worst slow-corner path is 39.06 ns long and
+about 100 cells deep. That is the specification circuit's single-cycle evaluation of the same-cycle
+dependencies (`doc/spec/circuit.md` 4), which the chip RTL must pipeline.
+
+Routable size for this netlist style on this floorplan: clean at about 307k um^2 of synthesised
+cells (40 % utilisation), marginal at about 377k (49 %), not routable at about 436k (57 %). The
+specification circuit with one shared execute stage is about 527k to 535k: the chip RTL has to come
+in at or below about 350k, by structure (narrow read paths) before scope.
